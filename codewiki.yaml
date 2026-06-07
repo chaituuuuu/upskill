@@ -1,0 +1,60 @@
+# codewiki.yaml — sample configuration
+# Copy this file to your project root and customise.
+# Precedence: this file < .env < environment variables < CLI flags
+
+# -------------------------------------------------------------------
+# LLM endpoint (OpenAI-compatible — works with OpenAI, Azure, Ollama,
+# vLLM, LM Studio, OpenRouter, Together, etc.)
+# -------------------------------------------------------------------
+llm:
+  base_url: "https://api.openai.com/v1"   # change to e.g. http://localhost:11434/v1
+  model: "gpt-4o-mini"                    # e.g. qwen2.5-coder:32b  |  gpt-4o  |  claude-3-5-sonnet
+  api_key_env: "OPENAI_API_KEY"           # env var that holds the real key
+  # api_key: "sk-..."                     # or paste directly (not recommended)
+  temperature: 0.0                        # 0 = deterministic
+  max_tokens: 4096
+  timeout_s: 120.0
+
+  # Optional: separate embeddings endpoint
+  # embedding_model: "text-embedding-3-small"
+  # embedding_base_url: "https://api.openai.com/v1"
+
+# -------------------------------------------------------------------
+# Source ingestion
+# -------------------------------------------------------------------
+ingest:
+  include_globs:
+    - "**/*"
+  exclude_globs:
+    - "**/node_modules/**"
+    - "**/.git/**"
+    - "**/vendor/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/__pycache__/**"
+    - "**/*.min.js"
+    - "**/*.lock"
+    - "**/package-lock.json"
+    - "**/poetry.lock"
+    - "**/yarn.lock"
+  skip_binary: true
+  max_file_size_kb: 512
+  # git_token_env: "GIT_TOKEN"   # for private repos
+
+# -------------------------------------------------------------------
+# Wiki output
+# -------------------------------------------------------------------
+wiki:
+  output_dir: "wiki"
+  strict_grounding: true        # refuse claims without code citations
+  default_audience: "both"      # business | technical | both
+
+# -------------------------------------------------------------------
+# Run / budget
+# -------------------------------------------------------------------
+run:
+  concurrency: 8                # max parallel LLM calls
+  # max_files: 100              # cap for testing (uncomment to limit)
+  # token_budget: 1000000       # hard stop at 1M tokens
+  dry_run: false
+  cache_dir: ".codewiki_cache"
