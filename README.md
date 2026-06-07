@@ -64,7 +64,6 @@ See [`codewiki.yaml`](codewiki.yaml) for the annotated sample and [`.env.example
 
 ```bash
 pip install -e ".[dev]"
-pytest            # run all tests
 ruff check .      # lint
 ```
 

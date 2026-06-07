@@ -84,7 +84,6 @@ codewiki/               ← Python package
   query/                ← Phase 4
   lint/                 ← Phase 5
   viewer/               ← Phase 6
-tests/
 agents/
   implementor_agent.md  ← this file
 docs/

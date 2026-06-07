@@ -128,7 +128,6 @@ codewiki/
 | Diagrams | **Mermaid** (text, rendered in viewer) | No native render dependency |
 | Viewer | **FastAPI + HTMX/Jinja + mermaid.js + markdown-it** | Lightweight local app |
 | Concurrency | **asyncio + anyio** | Parallel file summarization w/ limits |
-| Tests | **pytest** | — |
 
 > **No hard dependency on any single LLM vendor.** Local models (Ollama/vLLM/LM Studio) and hosted (OpenAI/Azure/OpenRouter/Together) all work via `base_url`+`model`.
 
@@ -156,7 +155,7 @@ class LLMClient:
 ## 6. Phased Milestones
 
 ### Phase 0 — Scaffold & Config (foundation)
-- Repo skeleton, `pyproject.toml`, `pytest`, lint.
+- Repo skeleton, `pyproject.toml`, lint.
 - `config.py` with yaml/env/CLI precedence; `codewiki.yaml` sample.
 - `LLMClient` with chat+embed + retry + a `codewiki ping` command to verify the endpoint.
 - **Exit:** `codewiki ping` returns a model completion from any configured endpoint.
@@ -247,17 +246,7 @@ sequenceDiagram
 
 ---
 
-## 9. Testing & Quality
-
-- **Unit:** config precedence, walker globs, parser symbol extraction, citation resolver.
-- **Golden repos:** small fixture repos (one per language) with expected page/structure snapshots.
-- **Grounding test:** assert ≥95% of claims carry resolvable citations on fixtures.
-- **Provider matrix (CI/manual):** same fixture run vs. OpenAI + Azure + Ollama → structure parity.
-- **Determinism:** two runs (temp=0) on a fixture produce identical page set/structure.
-
----
-
-## 10. Sequencing & First Steps
+## 9. Sequencing & First Steps
 
 1. **Lock the open questions** in PRD §12 (stack=Python assumed; viewer custom-FastAPI; grounding=strict-by-default).
 2. Build **Phase 0** (scaffold + configurable LLM client + `ping`) — proves the configurable-endpoint requirement immediately.
@@ -266,7 +255,7 @@ sequenceDiagram
 
 ---
 
-## 11. Stretch Ideas (post-v1)
+## 10. Stretch Ideas (post-v1)
 - Obsidian vault output + Dataview dashboards (capabilities by area, risk heatmap).
 - Marp slide-deck generation ("Architecture in 10 slides") from wiki.
 - MCP server so other agents can query the wiki as a native tool.
