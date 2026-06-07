@@ -150,7 +150,7 @@ class RunConfig(BaseSettings):
     concurrency: int = Field(default=8, gt=0, description="Max parallel LLM calls.")
     max_files: Optional[int] = Field(
         default=None,
-        description="Cap on files processed (useful for dry-runs / testing).",
+        description="Cap on files processed (useful for dry-runs / staged runs).",
     )
     token_budget: Optional[int] = Field(
         default=None,

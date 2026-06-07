@@ -7,9 +7,9 @@
 # vLLM, LM Studio, OpenRouter, Together, etc.)
 # -------------------------------------------------------------------
 llm:
-  base_url: "https://api.openai.com/v1"   # change to e.g. http://localhost:11434/v1
+  base_url: "https://localhost:3333/v1"   # change to e.g. http://localhost:11434/v1
   model: "gpt-4o-mini"                    # e.g. qwen2.5-coder:32b  |  gpt-4o  |  claude-3-5-sonnet
-  api_key_env: "OPENAI_API_KEY"           # env var that holds the real key
+  # api_key_env: "OPENAI_API_KEY"           # env var that holds the real key
   # api_key: "sk-..."                     # or paste directly (not recommended)
   temperature: 0.0                        # 0 = deterministic
   max_tokens: 4096
@@ -54,7 +54,7 @@ wiki:
 # -------------------------------------------------------------------
 run:
   concurrency: 8                # max parallel LLM calls
-  # max_files: 100              # cap for testing (uncomment to limit)
+  # max_files: 100              # optional processing cap (uncomment to limit)
   # token_budget: 1000000       # hard stop at 1M tokens
   dry_run: false
   cache_dir: ".codewiki_cache"

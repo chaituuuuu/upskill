@@ -15,21 +15,26 @@ Coming in later phases:
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
+import uvicorn
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from codewiki import __version__
 from codewiki.config import CodeWikiConfig, load_config
+from codewiki.ingest.parser import parse_symbols
+from codewiki.ingest.source import resolve_source
+from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
 from codewiki.llm.client import LLMClient
 from codewiki.llm.retry import with_retry
+from codewiki.pipeline import run_chat, run_generate, run_lint_pipeline, run_update
+from codewiki.signals.detectors import detect_signals
+from codewiki.viewer.app import create_app
 
 app = typer.Typer(
     name="codewiki",
@@ -135,20 +140,53 @@ def generate(
     max_files: Optional[int] = typer.Option(None, "--max-files"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o"),
 ) -> None:
-    """Generate the wiki for a codebase (Phase 1–3)."""
+    """Generate the wiki for a codebase."""
     cfg = _load_cfg(config_file=config_file, model=model, base_url=base_url, dry_run=dry_run)
     if max_files is not None:
         cfg.run.max_files = max_files
     if output_dir is not None:
         cfg.wiki.output_dir = output_dir
 
-    console.print(
-        "[yellow]⚠ 'generate' is not yet implemented — scheduled for Phase 1.[/yellow]"
-    )
-    console.print(f"  source     : {source}")
-    console.print(f"  output_dir : {cfg.wiki.output_dir}")
-    console.print(f"  dry_run    : {cfg.run.dry_run}")
-    raise typer.Exit(0)
+    if cfg.run.dry_run:
+        source_root, cleanup = resolve_source(source, cfg)
+        try:
+            files = walk_source(source_root, cfg)
+            symbols = parse_symbols(files)
+            signals = detect_signals(files, symbols)
+            est_tokens = int(sum(len(f.text.split()) for f in files) * 1.35)
+
+            table = Table(title="Dry Run Estimate", show_header=True)
+            table.add_column("Metric", style="bold cyan")
+            table.add_column("Value")
+            table.add_row("source", str(source_root))
+            table.add_row("files", str(len(files)))
+            table.add_row("symbols", str(len(symbols)))
+            table.add_row("signals", str(len(signals)))
+            table.add_row("estimated_tokens", f"{est_tokens:,}")
+            if cfg.run.token_budget is not None:
+                remaining = cfg.run.token_budget - est_tokens
+                table.add_row("budget_remaining", f"{remaining:,}")
+            console.print(table)
+        finally:
+            cleanup()
+        return
+
+    try:
+        result = run_generate(source, cfg)
+    except Exception as exc:
+        console.print(f"[red]✗ Generate failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Generate Complete", show_header=True)
+    table.add_column("Metric", style="bold cyan")
+    table.add_column("Value")
+    table.add_row("source_root", str(result.source_root))
+    table.add_row("wiki_root", str(result.wiki_root))
+    table.add_row("files", str(result.files))
+    table.add_row("symbols", str(result.symbols))
+    table.add_row("signals", str(result.signals))
+    table.add_row("pages", str(result.pages))
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +200,24 @@ def update(
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Diff-aware incremental wiki refresh (Phase 5)."""
-    console.print("[yellow]⚠ 'update' is not yet implemented — scheduled for Phase 5.[/yellow]")
-    raise typer.Exit(0)
+    """Diff-aware incremental wiki refresh."""
+    cfg = _load_cfg(config_file=config_file, dry_run=dry_run)
+    try:
+        result = run_update(source, cfg)
+    except Exception as exc:
+        console.print(f"[red]✗ Update failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    table = Table(title="Update Result", show_header=True)
+    table.add_column("Metric", style="bold cyan")
+    table.add_column("Value")
+    table.add_row("updated", str(result.get("updated", False)))
+    table.add_row("pages_written", str(result.get("pages", 0)))
+    changes = result.get("changes", {})
+    table.add_row("added", str(len(changes.get("added", []))))
+    table.add_row("removed", str(len(changes.get("removed", []))))
+    table.add_row("changed", str(len(changes.get("changed", []))))
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -178,9 +231,15 @@ def chat(
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
     file_back: bool = typer.Option(False, "--file-back", help="Save answer as a wiki page."),
 ) -> None:
-    """Grounded Q&A over the wiki + code (Phase 4)."""
-    console.print("[yellow]⚠ 'chat' is not yet implemented — scheduled for Phase 4.[/yellow]")
-    raise typer.Exit(0)
+    """Grounded Q&A over the wiki + local code index."""
+    cfg = _load_cfg(config_file=config_file)
+    try:
+        answer = run_chat(question, cfg, file_back=file_back)
+    except Exception as exc:
+        console.print(f"[red]✗ Chat failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(Panel(answer, title="Answer", border_style="blue"))
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +251,27 @@ def chat(
 def lint(
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
-    """Wiki health report: stale, orphans, broken citations (Phase 5)."""
-    console.print("[yellow]⚠ 'lint' is not yet implemented — scheduled for Phase 5.[/yellow]")
-    raise typer.Exit(0)
+    """Wiki health report: stale, orphans, broken citations."""
+    cfg = _load_cfg(config_file=config_file)
+    report = run_lint_pipeline(cfg)
+
+    table = Table(title="Lint Report", show_header=True)
+    table.add_column("Metric", style="bold cyan")
+    table.add_column("Value")
+    table.add_row("pages", str(report.get("pages", 0)))
+    table.add_row("broken_links", str(len(report.get("broken_links", []))))
+    table.add_row("missing_citations", str(len(report.get("missing_citations", []))))
+    table.add_row("orphans", str(len(report.get("orphans", []))))
+    console.print(table)
+
+    if report.get("broken_links"):
+        console.print("[yellow]Broken links:[/yellow]")
+        for item in report["broken_links"][:20]:
+            console.print(f"- {item}")
+    if report.get("missing_citations"):
+        console.print("[yellow]Pages with Sources but no citations:[/yellow]")
+        for item in report["missing_citations"][:20]:
+            console.print(f"- {item}")
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +284,11 @@ def serve(
     port: int = typer.Option(8080, "--port", "-p"),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
-    """Launch the local web viewer (Phase 6)."""
-    console.print("[yellow]⚠ 'serve' is not yet implemented — scheduled for Phase 6.[/yellow]")
-    raise typer.Exit(0)
+    """Launch the local web viewer."""
+    cfg = _load_cfg(config_file=config_file)
+    app_instance = create_app(cfg.wiki.output_dir)
+    console.print(f"Starting viewer on http://127.0.0.1:{port}")
+    uvicorn.run(app_instance, host="127.0.0.1", port=port)
 
 
 # ---------------------------------------------------------------------------

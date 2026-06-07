@@ -31,13 +31,13 @@ codewiki generate --source /path/to/your/repo --dry-run
 
 | Command | Description | Phase |
 |---------|-------------|-------|
-| `codewiki ping` | Verify LLM endpoint & config | 0 ✅ |
-| `codewiki generate --source <path\|url>` | Full wiki build | 1–3 |
-| `codewiki generate --source . --dry-run` | Estimate cost only | 1–3 |
-| `codewiki update --source .` | Diff-aware incremental refresh | 5 |
-| `codewiki chat "<question>"` | Grounded Q&A (+ file-back) | 4 |
-| `codewiki lint` | Health report: stale/orphan/citations | 5 |
-| `codewiki serve --port 8080` | Local web viewer | 6 |
+| `codewiki ping` | Verify LLM endpoint & config | ✅ |
+| `codewiki generate --source <path\|url>` | Ingest, map, detect signals, index, and generate wiki | ✅ |
+| `codewiki generate --source . --dry-run` | Estimate file/symbol/signal/tokens without writing pages | ✅ |
+| `codewiki update --source .` | Diff-aware refresh using manifest-based change detection | ✅ |
+| `codewiki chat "<question>"` | Grounded Q&A over local index + wiki context (`--file-back` supported) | ✅ |
+| `codewiki lint` | Wiki health report: broken links, missing citations, orphans | ✅ |
+| `codewiki serve --port 8080` | Local FastAPI markdown + Mermaid viewer | ✅ |
 
 ---
 
@@ -73,14 +73,14 @@ ruff check .      # lint
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 0 | Scaffold + Config + LLM Client | ✅ Done |
-| 1 | Ingest & Repo Map | 🔜 |
-| 2 | Wiki Generation v1 | 🔜 |
-| 3 | Business Lens & Diagrams | 🔜 |
-| 4 | Index, Retrieval & Chat | 🔜 |
-| 5 | Incremental Update & Lint | 🔜 |
-| 6 | Viewer & Export | 🔜 |
-| 7 | Scale & Hardening | 🔜 |
+| 0 | Scaffold + Config + LLM Client | ✅ Baseline complete |
+| 1 | Ingest & Repo Map | ✅ Baseline complete |
+| 2 | Wiki Generation v1 | ✅ Baseline complete |
+| 3 | Business Lens & Diagrams | ✅ Baseline complete |
+| 4 | Index, Retrieval & Chat | ✅ Baseline complete |
+| 5 | Incremental Update & Lint | ✅ Baseline complete |
+| 6 | Viewer & Export | ✅ Baseline complete |
+| 7 | Scale & Hardening | ⏳ Next iteration |
 
 See [`agents/implementor_agent.md`](agents/implementor_agent.md) for implementation status and decisions.
 

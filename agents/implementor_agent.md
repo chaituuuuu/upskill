@@ -1,7 +1,7 @@
 # Implementor Agent
 
 > **Role:** I am the **Implementor Agent** for the CodeWiki project.  
-> **Model:** GitHub Copilot (Claude Sonnet 4.6)  
+> **Model:** GitHub Copilot (GPT-5.3-Codex)  
 > **Session start:** 2026-06-08  
 
 ---
@@ -40,14 +40,14 @@ Point it at a large codebase → it produces and maintains a structured, interli
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 0 | Scaffold & Config + LLM Client | 🔄 In Progress |
-| 1 | Ingest & Repo Map | ⬜ Not Started |
-| 2 | Wiki Generation v1 | ⬜ Not Started |
-| 3 | Business Lens & Diagrams | ⬜ Not Started |
-| 4 | Index, Retrieval & Chat | ⬜ Not Started |
-| 5 | Incremental Update & Lint | ⬜ Not Started |
-| 6 | Viewer & Export | ⬜ Not Started |
-| 7 | Scale & Hardening | ⬜ Not Started |
+| 0 | Scaffold & Config + LLM Client | ✅ Baseline Complete |
+| 1 | Ingest & Repo Map | ✅ Baseline Complete |
+| 2 | Wiki Generation v1 | ✅ Baseline Complete |
+| 3 | Business Lens & Diagrams | ✅ Baseline Complete |
+| 4 | Index, Retrieval & Chat | ✅ Baseline Complete |
+| 5 | Incremental Update & Lint | ✅ Baseline Complete |
+| 6 | Viewer & Export | ✅ Baseline Complete |
+| 7 | Scale & Hardening | ⏳ Next Iteration |
 
 ---
 
@@ -64,6 +64,22 @@ Point it at a large codebase → it produces and maintains a structured, interli
 | Config precedence | `codewiki.yaml` < `.env` < env vars < CLI flags | Standard 12-factor ordering |
 | Strict grounding default | **True** | PRD §10: trust over fluency; easier to loosen than tighten |
 | tree-sitter grammars phase 1 | Python + JS/TS | Cover widest common codebase first per IMPLEMENTATION_PLAN §6 Phase 1 |
+
+### 2026-06-08 — End-to-end baseline implementation
+
+| Area | Implemented |
+|------|-------------|
+| Ingest | local path/Git URL source resolver, file walker with include/exclude and binary skipping |
+| Parse | symbol extraction for Python and JS/TS with import harvesting |
+| Repo map | language stats, import graph, framework/entrypoint detection |
+| Signals | API/data model/integration/scheduler/config detection |
+| Index | symbol-aware chunking + BM25 store and retrieval |
+| Wiki | structured page generator, Mermaid diagrams, AGENTS/index/log output |
+| Update | manifest-based diff + conditional regeneration |
+| Chat | grounded retrieval answer + optional LLM synthesis + file-back |
+| Lint | broken links, orphan pages, missing citation checks |
+| Viewer | FastAPI renderer with markdown + Mermaid support |
+| CLI | ping/generate/update/chat/lint/serve fully wired |
 
 ---
 
@@ -128,7 +144,7 @@ codewiki serve --port 8080
 
 ## Notes & Open Questions
 
-- [ ] Phase 1: confirm tree-sitter grammar wheel availability for Windows (may need to compile from source)
-- [ ] Phase 3: prompt engineering for capability extraction — iterate against a real medium repo
-- [ ] Phase 4: threshold for switching from index.md-only to FAISS — probably ~5k chunks
-- [ ] Phase 6: decide MkDocs vs Docusaurus for static export (MkDocs leans Python ecosystem)
+- [ ] Upgrade parser backend to full tree-sitter AST across Python/JS/TS/Java/Go/C#
+- [ ] Add embeddings + hybrid ranker and budget-aware retrieval routing
+- [ ] Improve contradiction detection and stale-page pinpointing in lint/update
+- [ ] Add static export mode (MkDocs) and richer viewer navigation
