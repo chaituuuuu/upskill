@@ -7,8 +7,8 @@
 # vLLM, LM Studio, OpenRouter, Together, etc.)
 # -------------------------------------------------------------------
 llm:
-  base_url: "https://localhost:3333/v1"   # change to e.g. http://localhost:11434/v1
-  model: "gpt-4o-mini"                    # e.g. qwen2.5-coder:32b  |  gpt-4o  |  claude-3-5-sonnet
+  base_url: "http://localhost:3333/v1"   # change to e.g. http://localhost:11434/v1
+  model: "gpt-4o"                    # e.g. qwen2.5-coder:32b  |  gpt-4o  |  claude-3-5-sonnet
   # api_key_env: "OPENAI_API_KEY"           # env var that holds the real key
   # api_key: "sk-..."                     # or paste directly (not recommended)
   temperature: 0.0                        # 0 = deterministic

@@ -27,12 +27,20 @@ def walk_source(root: Path, cfg: CodeWikiConfig) -> list[FileRecord]:
     """Read source files from a repo root into normalized FileRecord objects."""
     out: list[FileRecord] = []
     max_size = cfg.ingest.max_file_size_kb * 1024
+    wiki_dir = cfg.wiki.output_dir.as_posix().strip("./")
+    cache_dir = cfg.run.cache_dir.as_posix().strip("./")
 
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
 
         rel = path.relative_to(root).as_posix()
+
+        # Avoid recursive ingestion of generated artifacts when source is repo root.
+        if wiki_dir and (rel == wiki_dir or rel.startswith(wiki_dir + "/")):
+            continue
+        if cache_dir and (rel == cache_dir or rel.startswith(cache_dir + "/")):
+            continue
 
         if cfg.ingest.exclude_globs and _match_any(rel, cfg.ingest.exclude_globs):
             continue

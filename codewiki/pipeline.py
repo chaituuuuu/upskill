@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -49,6 +50,13 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+        )
+
+        manifest_path = cfg.wiki.output_dir / ".codewiki_manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps({"files": {f.path: f.hash for f in file_records}}, indent=2),
+            encoding="utf-8",
         )
 
         return GenerateResult(
