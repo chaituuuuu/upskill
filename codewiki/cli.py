@@ -32,7 +32,7 @@ from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
 from codewiki.llm.client import LLMClient
 from codewiki.llm.retry import with_retry
-from codewiki.pipeline import run_chat, run_generate, run_lint_pipeline, run_update
+from codewiki.pipeline import run_chat, run_generate, run_impact, run_lint_pipeline, run_update
 from codewiki.signals.detectors import detect_signals
 from codewiki.viewer.app import create_app
 
@@ -216,6 +216,12 @@ def update(
     table.add_row("added", str(len(changes.get("added", []))))
     table.add_row("removed", str(len(changes.get("removed", []))))
     table.add_row("changed", str(len(changes.get("changed", []))))
+    table.add_row("affected_pages", str(len(result.get("affected_pages", []))))
+    table.add_row("regenerated_pages", str(len(result.get("regenerated_pages", []))))
+    table.add_row("stale_removed", str(len(result.get("stale_removed_pages", []))))
+    table.add_row("proposed_pages", str(len(result.get("proposed_pages", []))))
+    table.add_row("locked_skipped", str(len(result.get("skipped_locked", []))))
+    table.add_row("contradictions", str(len(result.get("contradictions", []))))
     console.print(table)
 
 
@@ -249,10 +255,12 @@ def chat(
 @app.command()
 def lint(
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
+    source: Optional[str] = typer.Option(None, "--source", "-s", help="Source root for citation resolution."),
 ) -> None:
     """Wiki health report: stale, orphans, broken citations."""
     cfg = _load_cfg(config_file=config_file)
-    report = run_lint_pipeline(cfg)
+    source_root = Path(source) if source else None
+    report = run_lint_pipeline(cfg, source_root=source_root)
 
     table = Table(title="Lint Report", show_header=True)
     table.add_column("Metric", style="bold cyan")
@@ -260,6 +268,9 @@ def lint(
     table.add_row("pages", str(report.get("pages", 0)))
     table.add_row("broken_links", str(len(report.get("broken_links", []))))
     table.add_row("missing_citations", str(len(report.get("missing_citations", []))))
+    table.add_row("unresolved_citations", str(len(report.get("unresolved_citations", []))))
+    table.add_row("stale_citations", str(len(report.get("stale_citations", []))))
+    table.add_row("placeholder_citations", str(len(report.get("placeholder_citations", []))))
     table.add_row("orphans", str(len(report.get("orphans", []))))
     console.print(table)
 
@@ -271,6 +282,56 @@ def lint(
         console.print("[yellow]Pages with Sources but no citations:[/yellow]")
         for item in report["missing_citations"][:20]:
             console.print(f"- {item}")
+    if report.get("unresolved_citations"):
+        console.print("[red]Unresolved citations (file not found):[/red]")
+        for item in report["unresolved_citations"][:20]:
+            console.print(f"- {item}")
+    if report.get("stale_citations"):
+        console.print("[yellow]Stale citations (line range out of range):[/yellow]")
+        for item in report["stale_citations"][:20]:
+            console.print(f"- {item}")
+    if report.get("placeholder_citations"):
+        console.print("[dim]Placeholder citations (L1-L1):[/dim]")
+        for item in report["placeholder_citations"][:20]:
+            console.print(f"- {item}")
+
+
+# ---------------------------------------------------------------------------
+# impact (W4)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def impact(
+    target: str = typer.Argument(..., help="Symbol id or file path to analyse."),
+    source: str = typer.Argument(..., help="Source directory to build graph from."),
+    config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Show files and wiki pages that depend on a symbol or file."""
+    cfg = _load_cfg(config_file=config_file)
+    try:
+        result = run_impact(target, source, cfg)
+    except Exception as exc:
+        console.print(f"[red]✗ Impact failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[bold]Impact analysis for:[/bold] {result['target']}")
+
+    affected_files = result.get("affected_files", [])
+    if affected_files:
+        console.print(f"\n[bold cyan]Affected files ({len(affected_files)}):[/bold cyan]")
+        for f in affected_files:
+            console.print(f"  {f}")
+    else:
+        console.print("[green]No upstream dependents found.[/green]")
+
+    affected_pages = result.get("affected_pages", [])
+    if affected_pages:
+        console.print(f"\n[bold cyan]Affected wiki pages ({len(affected_pages)}):[/bold cyan]")
+        for p in affected_pages:
+            console.print(f"  {p}")
+    else:
+        console.print("[dim]No affected wiki pages (pagemap not yet available; see W5).[/dim]")
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +381,8 @@ def _print_config(cfg: CodeWikiConfig) -> None:
         "llm.embedding_model": cfg.llm.embedding_model or "(none)",
         "wiki.output_dir": str(cfg.wiki.output_dir),
         "wiki.strict_grounding": cfg.wiki.strict_grounding,
+        "generation.map_reduce_concurrency": cfg.generation.map_reduce_concurrency,
+        "generation.summary_cache": cfg.generation.summary_cache,
         "run.concurrency": cfg.run.concurrency,
         "run.dry_run": cfg.run.dry_run,
         "run.token_budget": cfg.run.token_budget or "(unlimited)",

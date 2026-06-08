@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from codewiki.config import CodeWikiConfig
+from codewiki.graph.code_graph import CodeGraph
 from codewiki.index.chunker import chunk_symbols
 from codewiki.index.store import IndexStore
 from codewiki.ingest.parser import parse_symbols
@@ -16,6 +17,7 @@ from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
 from codewiki.lint.health import run_lint
 from codewiki.query.chat import answer_question
+from codewiki.query.impact import impact as _impact
 from codewiki.signals.detectors import detect_signals
 from codewiki.wiki.generator import generate_wiki
 from codewiki.wiki.updater import update_wiki
@@ -44,6 +46,9 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
         store = IndexStore(index_path)
         store.build(snippets)
 
+        code_graph = CodeGraph()
+        code_graph.build_from_repo(file_records, symbols, repo_map)
+
         run_budget = Budget(token_limit=cfg.run.token_budget)
         pages = generate_wiki(
             source_root=source_root,
@@ -52,6 +57,7 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+            code_graph=code_graph,
             budget=run_budget,
         )
 
@@ -87,5 +93,19 @@ def run_chat(question: str, cfg: CodeWikiConfig, file_back: bool = False) -> str
     return answer_question(question, cfg, file_back=file_back, budget=budget)
 
 
-def run_lint_pipeline(cfg: CodeWikiConfig) -> dict:
-    return run_lint(cfg.wiki.output_dir)
+def run_lint_pipeline(cfg: CodeWikiConfig, source_root: Path | None = None) -> dict:
+    return run_lint(cfg.wiki.output_dir, source_root=source_root)
+
+
+def run_impact(target: str, source: str, cfg: CodeWikiConfig) -> dict:
+    """Ingest source, build graph, and return impact analysis for *target*."""
+    source_path, cleanup = resolve_source(source, cfg)
+    try:
+        file_records = walk_source(source_path, cfg)
+        symbols = parse_symbols(file_records)
+        repo_map = build_repo_map(source_path, file_records, symbols)
+        code_graph = CodeGraph()
+        code_graph.build_from_repo(file_records, symbols, repo_map)
+        return _impact(target, code_graph, wiki_root=cfg.wiki.output_dir)
+    finally:
+        cleanup()

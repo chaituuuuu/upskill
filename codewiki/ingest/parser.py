@@ -29,12 +29,34 @@ def _parse_python(file: FileRecord) -> list[Symbol]:
         if isinstance(node, ast.Import):
             imports.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            imports.append(node.module or "")
+            prefix = "." * max(0, getattr(node, "level", 0))
+            base = (node.module or "").strip()
+
+            if base:
+                imports.append(prefix + base)
+
+            for alias in node.names:
+                name = alias.name.strip()
+                if not name or name == "*":
+                    continue
+                if base:
+                    imports.append(f"{prefix}{base}.{name}")
+                else:
+                    imports.append(prefix + name)
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             start = getattr(node, "lineno", 1)
             end = getattr(node, "end_lineno", start)
+            
+            calls: list[str] = []
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call):
+                    if isinstance(child.func, ast.Name):
+                        calls.append(child.func.id)
+                    elif isinstance(child.func, ast.Attribute):
+                        calls.append(child.func.attr)
+            
             symbols.append(
                 Symbol(
                     id=_symbol_id(file.path, node.name, start),
@@ -46,6 +68,7 @@ def _parse_python(file: FileRecord) -> list[Symbol]:
                     signature=f"def {node.name}(...)",
                     docstring=ast.get_docstring(node) or "",
                     imports=imports,
+                    calls=calls,
                 )
             )
         elif isinstance(node, ast.ClassDef):

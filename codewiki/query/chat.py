@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from codewiki.config import CodeWikiConfig
@@ -99,7 +99,7 @@ def answer_question(
     if file_back:
         dst = cfg.wiki.output_dir / "workflows" / f"qa-{safe_slug(question)[:48]}.md"
         dst.parent.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        stamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
         dst.write_text(
             f"# Filed Answer\n\nGenerated at {stamp} UTC\n\n{answer}\n",
             encoding="utf-8",

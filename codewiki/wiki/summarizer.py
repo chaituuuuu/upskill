@@ -64,7 +64,8 @@ def summarize_repository(
 ) -> SummaryBundle:
     """Run file map stage and module/system reduce stages for wiki generation."""
     run_budget = budget or Budget(token_limit=cfg.run.token_budget)
-    cache = SummaryCache(cfg.run.cache_dir, enabled=use_cache)
+    cache_enabled = use_cache and cfg.generation.summary_cache
+    cache = SummaryCache(cfg.run.cache_dir, enabled=cache_enabled)
 
     file_summaries = asyncio.run(
         _summarize_files_map(
@@ -96,7 +97,8 @@ async def _summarize_files_map(
 ) -> list[FileSummary]:
     by_path = _symbols_by_path(symbols)
     signal_by_path = _signal_names_by_path(signals)
-    sem = asyncio.Semaphore(max(1, cfg.run.concurrency))
+    map_limit = min(cfg.run.concurrency, cfg.generation.map_reduce_concurrency)
+    sem = asyncio.Semaphore(max(1, map_limit))
 
     async with LLMClient(cfg.llm) as client:
         tasks = [

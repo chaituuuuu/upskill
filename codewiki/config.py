@@ -135,6 +135,30 @@ class WikiConfig(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
+# Generation sub-config
+# ---------------------------------------------------------------------------
+
+
+class GenerationConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="CODEWIKI_GENERATION_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    map_reduce_concurrency: int = Field(
+        default=4,
+        gt=0,
+        description="Maximum parallel map-stage file summaries.",
+    )
+    summary_cache: bool = Field(
+        default=True,
+        description="Enable hash-keyed file summary cache.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Run / budget sub-config
 # ---------------------------------------------------------------------------
 
@@ -188,9 +212,10 @@ class CodeWikiConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     wiki: WikiConfig = Field(default_factory=WikiConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
     run: RunConfig = Field(default_factory=RunConfig)
 
-    @field_validator("llm", "ingest", "wiki", "run", mode="before")
+    @field_validator("llm", "ingest", "wiki", "generation", "run", mode="before")
     @classmethod
     def _coerce_sub(cls, v: object) -> object:
         # Allow passing dicts (from YAML) — pydantic will construct the model

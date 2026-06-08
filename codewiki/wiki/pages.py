@@ -19,6 +19,7 @@ def write_page(
     sources: list[str] | None = None,
     related: list[str] | None = None,
     tags: list[str] | None = None,
+    confidence: str | None = None,
 ) -> Path:
     """Create or replace a wiki page with standard metadata and sections."""
     path = wiki_root / rel_path
@@ -31,6 +32,8 @@ def write_page(
         "sources": sources or [],
         "tags": tags or [],
     }
+    if confidence is not None:
+        frontmatter["confidence"] = confidence
 
     lines: list[str] = []
     lines.append("---")

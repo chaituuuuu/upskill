@@ -17,11 +17,23 @@ def append_log(wiki_root: Path, event: str, detail: str) -> None:
         fh.write(entry)
 
 
+def append_contradiction(wiki_root: Path, page: str) -> None:
+    """Append a contradiction marker in the requested W5 log shape."""
+    wiki_root.mkdir(parents=True, exist_ok=True)
+    log_path = wiki_root / "log.md"
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    entry = f"## [{stamp}] contradiction | {page}\n"
+    with log_path.open("a", encoding="utf-8") as fh:
+        if log_path.stat().st_size > 0:
+            fh.write("\n")
+        fh.write(entry)
+
+
 def rebuild_index(wiki_root: Path) -> None:
     pages = sorted(
         p.relative_to(wiki_root).as_posix()
         for p in wiki_root.rglob("*.md")
-        if p.name not in {"index.md", "log.md"}
+        if p.name not in {"index.md", "log.md"} and not p.name.endswith(".proposed.md")
     )
 
     by_folder: dict[str, list[str]] = {}

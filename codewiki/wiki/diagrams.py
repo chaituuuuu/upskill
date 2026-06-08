@@ -1,7 +1,8 @@
-"""Mermaid diagram builders from repo map and detected signals."""
+"""Mermaid diagram builders from code graph and detected signals."""
 
 from __future__ import annotations
 
+from codewiki.graph.code_graph import CodeGraph
 from codewiki.models import RepoMap, Signal
 
 
@@ -20,21 +21,63 @@ def system_context_diagram(repo_map: RepoMap, signals: list[Signal]) -> str:
     return "\n".join(lines)
 
 
-def component_graph_diagram(repo_map: RepoMap) -> str:
+def component_graph_diagram(code_graph: CodeGraph | None, repo_map: RepoMap | None = None) -> str:
     lines = ["flowchart TD"]
     added: set[tuple[str, str]] = set()
-
-    for path, deps in repo_map.import_graph.items():
-        a = path.replace("/", "_").replace(".", "_")
-        lines.append(f"    {a}[{path}]")
-        for dep in deps[:8]:
-            b = dep.replace("/", "_").replace(".", "_").replace("-", "_")
-            edge = (a, b)
-            if edge in added:
-                continue
-            added.add(edge)
-            lines.append(f"    {a} --> {b}[{dep}]")
-
+    
+    if code_graph is None:
+        if repo_map is None:
+            lines.append("    A[No graph available]")
+            return "\n".join(lines)
+        
+        for path, deps in repo_map.import_graph.items():
+            a = path.replace("/", "_").replace(".", "_")
+            lines.append(f"    {a}[{path}]")
+            for dep in deps[:8]:
+                b = dep.replace("/", "_").replace(".", "_").replace("-", "_")
+                edge = (a, b)
+                if edge in added:
+                    continue
+                added.add(edge)
+                lines.append(f"    {a} --> {b}[{dep}]")
+        return "\n".join(lines)
+    
+    internal_nodes = code_graph.get_internal_nodes()
+    external_nodes = code_graph.get_external_nodes()
+    
+    max_nodes = 30
+    displayed_internal = internal_nodes[:max_nodes]
+    
+    node_ids = {node.id for node in displayed_internal}
+    
+    for node in displayed_internal:
+        if node.kind == "file":
+            safe_id = node.id.replace(":", "_").replace("/", "_").replace(".", "_")
+            lines.append(f"    {safe_id}[{node.label}]")
+    
+    for from_id, to_id, edge_type in code_graph.backend.all_edges():
+        if from_id in node_ids and to_id in node_ids:
+            safe_from = from_id.replace(":", "_").replace("/", "_").replace(".", "_")
+            safe_to = to_id.replace(":", "_").replace("/", "_").replace(".", "_")
+            edge = (safe_from, safe_to)
+            if edge not in added and edge_type == "imports":
+                added.add(edge)
+                lines.append(f"    {safe_from} --> {safe_to}")
+    
+    if external_nodes:
+        ext_count = min(5, len(external_nodes))
+        for i, node in enumerate(external_nodes[:ext_count]):
+            safe_id = node.id.replace(":", "_").replace("/", "_").replace(".", "_").replace("-", "_")
+            lines.append(f"    {safe_id}[{node.label}]:::external")
+        
+        if len(external_nodes) > ext_count:
+            lines.append(f"    more_ext[+{len(external_nodes) - ext_count} more external]:::external")
+    
+    if len(internal_nodes) > max_nodes:
+        lines.append(f"    more[+{len(internal_nodes) - max_nodes} more]")
+    
+    lines.append("    classDef external fill:#f9f,stroke:#333,stroke-width:2px")
+    
     if len(lines) == 1:
         lines.append("    A[No import graph available]")
     return "\n".join(lines)
