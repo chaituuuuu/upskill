@@ -1,16 +1,19 @@
-"""Generate the markdown wiki from ingested repo structures and signals."""
+"""Generate the markdown wiki from ingested repo structures and summaries."""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path
 
 from codewiki.config import CodeWikiConfig
+from codewiki.llm.budget import Budget, BudgetExceeded
 from codewiki.models import FileRecord, RepoMap, Signal, Symbol
 from codewiki.utils import safe_slug
 from codewiki.wiki.diagrams import component_graph_diagram, system_context_diagram
 from codewiki.wiki.index_log import append_log, rebuild_index
 from codewiki.wiki.pages import write_page
+from codewiki.wiki.summarizer import FileSummary, ModuleSummary, SummaryBundle, summarize_repository
 
 
 def _top_components(files: list[FileRecord], max_items: int = 12) -> list[tuple[str, int]]:
@@ -35,6 +38,69 @@ def _capability_groups(signals: list[Signal]) -> dict[str, list[Signal]]:
     return out
 
 
+def _dedupe_keep_order(values: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        item = value.strip()
+        if item and item not in out:
+            out.append(item)
+    return out
+
+
+def _fallback_business_summary() -> str:
+    return (
+        "This system appears to provide a set of business capabilities derived from its "
+        "current code implementation. The wiki translates technical modules into business "
+        "outcomes, operational touchpoints, and integration dependencies."
+    )
+
+
+def _fallback_technical_summary(files: list[FileRecord], symbols: list[Symbol], signals: list[Signal]) -> str:
+    return (
+        f"Repository has {len(files)} files, {len(symbols)} extracted symbols, and "
+        f"{len(signals)} detected operational/business signals."
+    )
+
+
+def _module_index(bundle: SummaryBundle | None) -> dict[str, ModuleSummary]:
+    if bundle is None:
+        return {}
+    return {module.name: module for module in bundle.module_summaries}
+
+
+def _file_summary_index(bundle: SummaryBundle | None) -> dict[str, FileSummary]:
+    if bundle is None:
+        return {}
+    return {item.path: item for item in bundle.file_summaries}
+
+
+def _capability_summary(capability: str, bundle: SummaryBundle | None) -> str:
+    if bundle is None:
+        return "Business-facing capability synthesized from APIs and domain signals."
+
+    cap_lower = capability.lower()
+    for file_summary in bundle.file_summaries:
+        if cap_lower in file_summary.business_relevance.lower():
+            return file_summary.business_relevance
+
+    return bundle.system_summary.audiences.get(
+        "business",
+        "Business-facing capability synthesized from APIs and domain signals.",
+    )
+
+
+def _capability_sources(capability: str, bundle: SummaryBundle | None) -> list[str]:
+    if bundle is None:
+        return []
+
+    cap_lower = capability.lower()
+    citations: list[str] = []
+    for file_summary in bundle.file_summaries:
+        if cap_lower in file_summary.business_relevance.lower():
+            citations.extend(file_summary.citations)
+    return _dedupe_keep_order(citations)
+
+
 def generate_wiki(
     *,
     source_root: Path,
@@ -43,22 +109,40 @@ def generate_wiki(
     symbols: list[Symbol],
     repo_map: RepoMap,
     signals: list[Signal],
+    budget: Budget | None = None,
 ) -> int:
-    """Generate a complete baseline wiki from extracted repository knowledge."""
+    """Generate a complete wiki from extracted repository knowledge."""
     wiki_root = cfg.wiki.output_dir
     wiki_root.mkdir(parents=True, exist_ok=True)
 
     pages_written = 0
+    summary_bundle: SummaryBundle | None = None
 
-    business_summary = (
-        "This system appears to provide a set of business capabilities derived from its "
-        "current code implementation. The wiki translates technical modules into business "
-        "outcomes, operational touchpoints, and integration dependencies."
-    )
-    technical_summary = (
-        f"Repository has {len(files)} files, {len(symbols)} extracted symbols, and "
-        f"{len(signals)} detected operational/business signals."
-    )
+    try:
+        summary_bundle = summarize_repository(
+            cfg=cfg,
+            files=files,
+            symbols=symbols,
+            repo_map=repo_map,
+            signals=signals,
+            budget=budget,
+        )
+    except BudgetExceeded:
+        raise
+    except Exception:
+        # Preserve current offline behavior if summarization cannot be completed.
+        summary_bundle = None
+
+    module_summaries = _module_index(summary_bundle)
+    file_summaries = _file_summary_index(summary_bundle)
+
+    business_summary = _fallback_business_summary()
+    technical_summary = _fallback_technical_summary(files, symbols, signals)
+    if summary_bundle is not None:
+        business_summary = summary_bundle.system_summary.executive_summary or business_summary
+        technical_summary = (
+            summary_bundle.system_summary.audiences.get("technical") or technical_summary
+        )
 
     write_page(
         wiki_root,
@@ -104,13 +188,13 @@ def generate_wiki(
             ("Languages", "\n".join(lang_lines) if lang_lines else "No language stats found."),
             (
                 "Frameworks",
-                "\n".join(f"- {f}" for f in repo_map.frameworks)
+                "\n".join(f"- {framework}" for framework in repo_map.frameworks)
                 if repo_map.frameworks
                 else "No frameworks detected.",
             ),
             (
                 "Entrypoints",
-                "\n".join(f"- {e}" for e in repo_map.entrypoints)
+                "\n".join(f"- {entry}" for entry in repo_map.entrypoints)
                 if repo_map.entrypoints
                 else "No common entrypoints detected.",
             ),
@@ -131,55 +215,91 @@ def generate_wiki(
     )
     pages_written += 1
 
-    for component, count in _top_components(files):
+    for component, _ in _top_components(files):
         comp_files = [f.path for f in files if f.path.startswith(component + "/") or f.path == component]
         comp_symbols = [s for s in symbols if s.path in comp_files]
-        sources = [f"{p}:L1-L1" for p in comp_files[:12]]
+        comp_sources = [f"{path}:L1-L1" for path in comp_files[:12]]
+
+        summary_text = f"Technical ownership and responsibilities for {component}."
         body = [
             f"- Files: {len(comp_files)}",
             f"- Symbols: {len(comp_symbols)}",
         ]
+
+        module_summary = module_summaries.get(component)
+        if module_summary is not None:
+            summary_text = module_summary.responsibility or summary_text
+            body.append(f"- Confidence: {module_summary.confidence}")
+            if module_summary.capabilities:
+                body.append(f"- Capabilities: {', '.join(module_summary.capabilities[:6])}")
+            comp_sources = module_summary.citations[:20] or comp_sources
+        else:
+            summary_file = next(
+                (file_summaries[path] for path in comp_files if path in file_summaries),
+                None,
+            )
+            if summary_file is not None:
+                summary_text = summary_file.responsibility or summary_text
+                comp_sources = summary_file.citations[:20] or comp_sources
+
         write_page(
             wiki_root,
             f"components/{safe_slug(component)}.md",
             title=f"Component: {component}",
             page_type="component",
             audience="technical",
-            summary=f"Technical ownership and responsibilities for {component}.",
+            summary=summary_text,
             sections=[("Responsibility", "\n".join(body))],
-            sources=sources,
+            sources=comp_sources,
             tags=["component", component],
         )
         pages_written += 1
 
-    for cap, cap_signals in _capability_groups(signals).items():
+    for capability, cap_signals in _capability_groups(signals).items():
         sources: list[str] = []
-        for s in cap_signals:
-            sources.extend(s.evidence)
-        sources = sorted(set(sources))[:20]
+        for signal in cap_signals:
+            sources.extend(signal.evidence)
+        sources.extend(_capability_sources(capability, summary_bundle))
+        sources = _dedupe_keep_order(sources)[:24]
 
-        workflow_lines = [f"- {s.name}" for s in cap_signals if s.type == "api_route"]
+        workflow_lines = [f"- {signal.name}" for signal in cap_signals if signal.type == "api_route"]
         if not workflow_lines:
             workflow_lines = ["- Capability inferred from repository structure and integrations."]
 
         write_page(
             wiki_root,
-            f"capabilities/{safe_slug(cap)}.md",
-            title=f"Capability: {cap.replace('-', ' ').title()}",
+            f"capabilities/{safe_slug(capability)}.md",
+            title=f"Capability: {capability.replace('-', ' ').title()}",
             page_type="capability",
             audience="business",
-            summary="Business-facing capability synthesized from APIs and domain signals.",
+            summary=_capability_summary(capability, summary_bundle),
             sections=[("Business Workflow", "\n".join(workflow_lines))],
             sources=sources,
-            tags=["capability", cap],
+            tags=["capability", capability],
         )
         pages_written += 1
 
     glossary_lines = [
-        f"- **{s.name}** ({s.type})"
-        for s in signals
-        if s.type in {"data_model", "integration", "config", "messaging"}
+        f"- **{signal.name}** ({signal.type})"
+        for signal in signals
+        if signal.type in {"data_model", "integration", "config", "messaging"}
     ]
+    if summary_bundle is not None:
+        glossary_terms = _dedupe_keep_order(
+            symbol
+            for file_summary in summary_bundle.file_summaries
+            for symbol in file_summary.key_symbols
+        )[:60]
+        for term in glossary_terms:
+            glossary_lines.append(f"- **{term}** (symbol)")
+
+    glossary_sources = [signal.evidence[0] for signal in signals if signal.evidence][:30]
+    if summary_bundle is not None:
+        glossary_sources.extend(
+            cite for file_summary in summary_bundle.file_summaries for cite in file_summary.citations
+        )
+        glossary_sources = _dedupe_keep_order(glossary_sources)[:40]
+
     write_page(
         wiki_root,
         "domain/glossary.md",
@@ -188,12 +308,12 @@ def generate_wiki(
         audience="business",
         summary="Domain and operational terms extracted from code signals.",
         sections=[("Terms", "\n".join(glossary_lines) if glossary_lines else "No terms detected.")],
-        sources=[s.evidence[0] for s in signals if s.evidence][:30],
+        sources=glossary_sources,
         tags=["domain", "glossary"],
     )
     pages_written += 1
 
-    integration_lines = [f"- {s.name}" for s in signals if s.type == "integration"]
+    integration_lines = [f"- {signal.name}" for signal in signals if signal.type == "integration"]
     write_page(
         wiki_root,
         "integrations/external-systems.md",
@@ -207,7 +327,7 @@ def generate_wiki(
                 "\n".join(sorted(set(integration_lines))) if integration_lines else "No integrations found.",
             )
         ],
-        sources=[s.evidence[0] for s in signals if s.type == "integration" and s.evidence],
+        sources=[signal.evidence[0] for signal in signals if signal.type == "integration" and signal.evidence],
         tags=["integration"],
     )
     pages_written += 1

@@ -93,7 +93,7 @@ def ping(
     console.print(f"  base_url : [cyan]{cfg.llm.base_url}[/cyan]")
     console.print(f"  model    : [cyan]{cfg.llm.model}[/cyan]")
 
-    budget = Budget()
+    budget = Budget(token_limit=cfg.run.token_budget)
 
     async def _run() -> str:
         async with LLMClient(cfg.llm) as client:
@@ -104,10 +104,9 @@ def ping(
                 },
                 {"role": "user", "content": "Say 'CodeWiki ping successful.' and nothing else."},
             ]
-            response = await with_retry(client.chat, messages, retries=2)
-            # Budget tracking (best-effort — not all endpoints return usage)
-            budget.record(prompt_tokens=20, completion_tokens=10)
-            return response
+            result = await with_retry(client.chat, messages, retries=2)
+            budget.record_from_response(result.usage)
+            return result.text
 
     try:
         reply = asyncio.run(_run())
@@ -122,7 +121,7 @@ def ping(
             border_style="green",
         )
     )
-    console.print(f"  tokens (est.): {budget.total_tokens}")
+    console.print(f"  tokens       : {budget.total_tokens}")
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +152,7 @@ def generate(
             files = walk_source(source_root, cfg)
             symbols = parse_symbols(files)
             signals = detect_signals(files, symbols)
-            est_tokens = int(sum(len(f.text.split()) for f in files) * 1.35)
+            est_tokens = sum(Budget.estimate(f.text) for f in files)
 
             table = Table(title="Dry Run Estimate", show_header=True)
             table.add_column("Metric", style="bold cyan")

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from codewiki.config import CodeWikiConfig
 from codewiki.index.retriever import retrieve
+from codewiki.llm.budget import Budget, BudgetExceeded
 from codewiki.llm.client import LLMClient
 from codewiki.llm.retry import with_retry
 from codewiki.utils import safe_slug
@@ -40,7 +41,13 @@ def _fallback_answer(question: str, snippets) -> str:
     return "\n".join(lines)
 
 
-async def _llm_answer(cfg: CodeWikiConfig, question: str, snippets, wiki_context) -> str:
+async def _llm_answer(
+    cfg: CodeWikiConfig,
+    question: str,
+    snippets,
+    wiki_context,
+    budget: Budget | None = None,
+) -> str:
     messages = [
         {
             "role": "system",
@@ -59,21 +66,32 @@ async def _llm_answer(cfg: CodeWikiConfig, question: str, snippets, wiki_context
         },
     ]
     async with LLMClient(cfg.llm) as client:
-        return await with_retry(client.chat, messages, retries=2)
+        result = await with_retry(client.chat, messages, retries=2)
+        if budget is not None:
+            budget.record_from_response(result.usage)
+        return result.text
 
 
-def answer_question(question: str, cfg: CodeWikiConfig, file_back: bool = False) -> str:
+def answer_question(
+    question: str,
+    cfg: CodeWikiConfig,
+    file_back: bool = False,
+    budget: Budget | None = None,
+) -> str:
     """Answer a question using local retrieval + optional LLM synthesis."""
     index_dir = cfg.run.cache_dir / "index"
     snippets = retrieve(index_dir, question, top_k=8)
     wiki_context = _load_wiki_context(cfg.wiki.output_dir)
+    run_budget = budget or Budget(token_limit=cfg.run.token_budget)
 
     answer = _fallback_answer(question, snippets)
 
     try:
-        llm_text = asyncio.run(_llm_answer(cfg, question, snippets, wiki_context))
+        llm_text = asyncio.run(_llm_answer(cfg, question, snippets, wiki_context, run_budget))
         if llm_text.strip():
             answer = llm_text.strip()
+    except BudgetExceeded:
+        raise
     except Exception:
         # Keep fallback answer when the model endpoint is unavailable.
         pass

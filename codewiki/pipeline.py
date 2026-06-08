@@ -13,6 +13,7 @@ from codewiki.ingest.parser import parse_symbols
 from codewiki.ingest.repo_map import build_repo_map
 from codewiki.ingest.source import resolve_source
 from codewiki.ingest.walker import walk_source
+from codewiki.llm.budget import Budget
 from codewiki.lint.health import run_lint
 from codewiki.query.chat import answer_question
 from codewiki.signals.detectors import detect_signals
@@ -43,6 +44,7 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
         store = IndexStore(index_path)
         store.build(snippets)
 
+        run_budget = Budget(token_limit=cfg.run.token_budget)
         pages = generate_wiki(
             source_root=source_root,
             cfg=cfg,
@@ -50,6 +52,7 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+            budget=run_budget,
         )
 
         manifest_path = cfg.wiki.output_dir / ".codewiki_manifest.json"
@@ -80,7 +83,8 @@ def run_update(source: str, cfg: CodeWikiConfig) -> dict:
 
 
 def run_chat(question: str, cfg: CodeWikiConfig, file_back: bool = False) -> str:
-    return answer_question(question, cfg, file_back=file_back)
+    budget = Budget(token_limit=cfg.run.token_budget)
+    return answer_question(question, cfg, file_back=file_back, budget=budget)
 
 
 def run_lint_pipeline(cfg: CodeWikiConfig) -> dict:

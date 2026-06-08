@@ -12,8 +12,9 @@ Usage::
     cfg = load_config()
     client = LLMClient(cfg.llm)
 
-    response = await client.chat([{"role": "user", "content": "Hello!"}])
-    vectors  = await client.embed(["some text"])
+    result = await client.chat([{"role": "user", "content": "Hello!"}])
+    print(result.text)
+    vectors = await client.embed(["some text"])
 """
 
 from __future__ import annotations
@@ -24,11 +25,35 @@ from typing import Any
 import httpx
 
 from codewiki.config import LLMConfig
+from codewiki.llm.result import LLMResult
 
 logger = logging.getLogger(__name__)
 
 _CHAT_PATH = "/chat/completions"
 _EMBED_PATH = "/embeddings"
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_usage(usage: Any) -> dict[str, int]:
+    if not isinstance(usage, dict):
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    prompt_tokens = _to_int(usage.get("prompt_tokens"))
+    completion_tokens = _to_int(usage.get("completion_tokens"))
+    total_tokens = _to_int(usage.get("total_tokens"))
+    if total_tokens == 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
 
 
 class LLMClient:
@@ -59,9 +84,9 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         **extra: Any,
-    ) -> str:
+    ) -> LLMResult:
         """
-        Send a chat-completions request and return the assistant text.
+        Send a chat-completions request and return normalized completion data.
 
         Args:
             messages:    List of ``{"role": ..., "content": ...}`` dicts.
@@ -71,7 +96,7 @@ class LLMClient:
             **extra:     Any extra fields forwarded to the API payload.
 
         Returns:
-            The assistant message content as a plain string.
+            Structured completion data including usage and finish metadata.
 
         Raises:
             httpx.HTTPStatusError: On 4xx/5xx from the endpoint.
@@ -83,11 +108,30 @@ class LLMClient:
             "max_tokens": max_tokens if max_tokens is not None else self._cfg.max_tokens,
             **extra,
         }
-        logger.debug("chat → model=%s messages=%d", payload["model"], len(messages))
+        logger.debug("chat -> model=%s messages=%d", payload["model"], len(messages))
         resp = await self._http.post(_CHAT_PATH, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"]
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message", {}) if isinstance(choice, dict) else {}
+        content = message.get("content", "") if isinstance(message, dict) else ""
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
+
+        finish_reason = ""
+        if isinstance(choice, dict):
+            finish_reason = str(choice.get("finish_reason", "") or "")
+
+        return LLMResult(
+            text=str(content or ""),
+            usage=_normalize_usage(data.get("usage")),
+            model=str(data.get("model") or payload["model"]),
+            finish_reason=finish_reason,
+        )
 
     # ------------------------------------------------------------------
     # Embeddings
@@ -140,7 +184,7 @@ class LLMClient:
 
         try:
             payload = {"model": embed_model, "input": texts}
-            logger.debug("embed → model=%s texts=%d", embed_model, len(texts))
+            logger.debug("embed -> model=%s texts=%d", embed_model, len(texts))
             resp = await client.post(_EMBED_PATH, json=payload)
             resp.raise_for_status()
             data = resp.json()

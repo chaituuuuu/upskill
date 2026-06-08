@@ -20,7 +20,13 @@ def _is_binary(path: Path) -> bool:
 
 
 def _match_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch(path, pattern) for pattern in patterns)
+    # return any(fnmatch(path, pattern) for pattern in patterns)
+    for pattern in patterns:
+        if fnmatch(path, pattern):
+            return True
+        if pattern.startswith("**/") and fnmatch(path, pattern[3:]):
+            return True
+    return False
 
 
 def walk_source(root: Path, cfg: CodeWikiConfig) -> list[FileRecord]:

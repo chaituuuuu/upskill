@@ -45,6 +45,11 @@ class Budget:
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
+    @staticmethod
+    def estimate(text: str) -> int:
+        """Estimate tokens from raw text using the shared heuristic."""
+        return int(len(text.split()) * 1.35)
+
     def record(self, *, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         """
         Record token usage from a completed LLM call.
@@ -58,6 +63,8 @@ class Budget:
             self.completion_tokens += completion_tokens
             self.request_count += 1
 
+        self.enforce()
+
     def record_from_response(self, usage: dict) -> None:
         """
         Record from an OpenAI-style ``usage`` dict
@@ -68,12 +75,16 @@ class Budget:
             completion_tokens=usage.get("completion_tokens", 0),
         )
 
-    def check(self) -> None:
+    def enforce(self) -> None:
         """Raise :exc:`BudgetExceeded` if the token limit has been exceeded."""
         if self.token_limit is not None and self.total_tokens > self.token_limit:
             raise BudgetExceeded(
                 f"Token budget exceeded: {self.total_tokens:,} > {self.token_limit:,}"
             )
+
+    def check(self) -> None:
+        """Backward-compatible alias for :meth:`enforce`."""
+        self.enforce()
 
     def summary(self) -> dict:
         """Return a dict snapshot of current usage."""
