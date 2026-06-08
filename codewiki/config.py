@@ -111,6 +111,10 @@ class IngestConfig(BaseSettings):
         default=None,
         description="Env var name holding a personal access token for private Git repos.",
     )
+    parser_backend: Literal["auto", "ast", "tree-sitter"] = Field(
+        default="auto",
+        description="Symbol parser backend strategy.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -152,9 +156,36 @@ class GenerationConfig(BaseSettings):
         gt=0,
         description="Maximum parallel map-stage file summaries.",
     )
+    lens: Literal["business", "onboarding", "compliance", "security", "ai_opportunity"] = Field(
+        default="business",
+        description="Lens that controls extra analysis pages and detectors.",
+    )
     summary_cache: bool = Field(
         default=True,
         description="Enable hash-keyed file summary cache.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Embedding sub-config
+# ---------------------------------------------------------------------------
+
+
+class EmbeddingConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="CODEWIKI_EMBEDDING_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable vector retrieval over snippet embeddings.",
+    )
+    store: Literal["faiss", "numpy"] = Field(
+        default="faiss",
+        description="Preferred vector backend (falls back gracefully if unavailable).",
     )
 
 
@@ -213,9 +244,10 @@ class CodeWikiConfig(BaseSettings):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     wiki: WikiConfig = Field(default_factory=WikiConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     run: RunConfig = Field(default_factory=RunConfig)
 
-    @field_validator("llm", "ingest", "wiki", "generation", "run", mode="before")
+    @field_validator("llm", "ingest", "wiki", "generation", "embedding", "run", mode="before")
     @classmethod
     def _coerce_sub(cls, v: object) -> object:
         # Allow passing dicts (from YAML) — pydantic will construct the model

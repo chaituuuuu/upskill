@@ -32,6 +32,7 @@ from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
 from codewiki.llm.client import LLMClient
 from codewiki.llm.retry import with_retry
+from codewiki.lenses import available_lenses, get_lens
 from codewiki.pipeline import run_chat, run_generate, run_impact, run_lint_pipeline, run_update
 from codewiki.signals.detectors import detect_signals
 from codewiki.viewer.app import create_app
@@ -57,6 +58,7 @@ def _load_cfg(
     model: Optional[str] = None,
     base_url: Optional[str] = None,
     dry_run: bool = False,
+    lens: Optional[str] = None,
 ) -> CodeWikiConfig:
     overrides: dict = {}
     if model:
@@ -65,6 +67,8 @@ def _load_cfg(
         overrides["llm__base_url"] = base_url
     if dry_run:
         overrides["run__dry_run"] = True
+    if lens:
+        overrides["generation__lens"] = lens
     return load_config(yaml_path=config_file, overrides=overrides or None)
 
 
@@ -138,9 +142,20 @@ def generate(
     dry_run: bool = typer.Option(False, "--dry-run", help="Estimate cost only; write nothing."),
     max_files: Optional[int] = typer.Option(None, "--max-files"),
     output_dir: Optional[Path] = typer.Option(None, "--output", "-o"),
+    lens: Optional[str] = typer.Option(
+        None,
+        "--lens",
+        help=f"Analysis lens ({', '.join(available_lenses())}).",
+    ),
 ) -> None:
     """Generate the wiki for a codebase."""
-    cfg = _load_cfg(config_file=config_file, model=model, base_url=base_url, dry_run=dry_run)
+    cfg = _load_cfg(
+        config_file=config_file,
+        model=model,
+        base_url=base_url,
+        dry_run=dry_run,
+        lens=lens,
+    )
     if max_files is not None:
         cfg.run.max_files = max_files
     if output_dir is not None:
@@ -149,9 +164,14 @@ def generate(
     if cfg.run.dry_run:
         source_root, cleanup = resolve_source(source, cfg)
         try:
+            selected_lens = get_lens(cfg.generation.lens)
             files = walk_source(source_root, cfg)
-            symbols = parse_symbols(files)
-            signals = detect_signals(files, symbols)
+            symbols = parse_symbols(files, parser_backend=cfg.ingest.parser_backend)
+            signals = detect_signals(
+                files,
+                symbols,
+                extra_detectors=selected_lens.extra_signal_detectors(),
+            )
             est_tokens = sum(Budget.estimate(f.text) for f in files)
 
             table = Table(title="Dry Run Estimate", show_header=True)
@@ -161,6 +181,7 @@ def generate(
             table.add_row("files", str(len(files)))
             table.add_row("symbols", str(len(symbols)))
             table.add_row("signals", str(len(signals)))
+            table.add_row("lens", cfg.generation.lens)
             table.add_row("estimated_tokens", f"{est_tokens:,}")
             if cfg.run.token_budget is not None:
                 remaining = cfg.run.token_budget - est_tokens
@@ -379,8 +400,12 @@ def _print_config(cfg: CodeWikiConfig) -> None:
         "llm.temperature": cfg.llm.temperature,
         "llm.max_tokens": cfg.llm.max_tokens,
         "llm.embedding_model": cfg.llm.embedding_model or "(none)",
+        "embedding.enabled": cfg.embedding.enabled,
+        "embedding.store": cfg.embedding.store,
+        "ingest.parser_backend": cfg.ingest.parser_backend,
         "wiki.output_dir": str(cfg.wiki.output_dir),
         "wiki.strict_grounding": cfg.wiki.strict_grounding,
+        "generation.lens": cfg.generation.lens,
         "generation.map_reduce_concurrency": cfg.generation.map_reduce_concurrency,
         "generation.summary_cache": cfg.generation.summary_cache,
         "run.concurrency": cfg.run.concurrency,

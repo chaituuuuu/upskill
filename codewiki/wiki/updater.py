@@ -12,6 +12,8 @@ from codewiki.config import CodeWikiConfig
 from codewiki.ingest.parser import parse_symbols
 from codewiki.ingest.repo_map import build_repo_map
 from codewiki.ingest.walker import walk_source
+from codewiki.lenses.base import BaseLens
+from codewiki.lenses import get_lens
 from codewiki.signals.detectors import detect_signals
 from codewiki.utils import safe_slug
 from codewiki.wiki.generator import generate_wiki
@@ -181,6 +183,7 @@ def _write_proposed_pages(
     symbols,
     repo_map,
     signals,
+    lens: BaseLens,
     locked_pages: set[str],
 ) -> dict[str, str]:
     if not locked_pages:
@@ -196,6 +199,7 @@ def _write_proposed_pages(
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+            lens=lens,
             only_pages=locked_pages,
         )
 
@@ -234,9 +238,10 @@ def update_wiki(source_root: Path, cfg: CodeWikiConfig) -> dict:
         append_log(wiki_root, "update", "no changes detected")
         return {"updated": False, "changes": delta, "pages": 0}
 
-    symbols = parse_symbols(files)
+    lens = get_lens(cfg.generation.lens)
+    symbols = parse_symbols(files, parser_backend=cfg.ingest.parser_backend)
     repo_map = build_repo_map(source_root, files, symbols)
-    signals = detect_signals(files, symbols)
+    signals = detect_signals(files, symbols, extra_detectors=lens.extra_signal_detectors())
 
     old_pagemap = load_pagemap(wiki_root)
     changed_files = set(delta["added"]) | set(delta["removed"]) | set(delta["changed"])
@@ -251,6 +256,7 @@ def update_wiki(source_root: Path, cfg: CodeWikiConfig) -> dict:
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+            lens=lens,
         )
         manifest_path.write_text(json.dumps(new_manifest, indent=2), encoding="utf-8")
         append_log(
@@ -296,6 +302,7 @@ def update_wiki(source_root: Path, cfg: CodeWikiConfig) -> dict:
             symbols=symbols,
             repo_map=repo_map,
             signals=signals,
+            lens=lens,
             only_pages=regen_pages,
             written_pages=emitted_pages,
         )
@@ -314,6 +321,7 @@ def update_wiki(source_root: Path, cfg: CodeWikiConfig) -> dict:
         symbols=symbols,
         repo_map=repo_map,
         signals=signals,
+        lens=lens,
         locked_pages=locked_pages,
     )
 

@@ -15,6 +15,7 @@ from codewiki.ingest.repo_map import build_repo_map
 from codewiki.ingest.source import resolve_source
 from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
+from codewiki.lenses import get_lens
 from codewiki.lint.health import run_lint
 from codewiki.query.chat import answer_question
 from codewiki.query.impact import impact as _impact
@@ -36,10 +37,15 @@ class GenerateResult:
 def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
     source_root, cleanup = resolve_source(source, cfg)
     try:
+        lens = get_lens(cfg.generation.lens)
         file_records = walk_source(source_root, cfg)
-        symbols = parse_symbols(file_records)
+        symbols = parse_symbols(file_records, parser_backend=cfg.ingest.parser_backend)
         repo_map = build_repo_map(source_root, file_records, symbols)
-        signals = detect_signals(file_records, symbols)
+        signals = detect_signals(
+            file_records,
+            symbols,
+            extra_detectors=lens.extra_signal_detectors(),
+        )
         snippets = chunk_symbols(file_records, symbols)
 
         index_path = cfg.run.cache_dir / "index"
@@ -59,6 +65,7 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
             signals=signals,
             code_graph=code_graph,
             budget=run_budget,
+            lens=lens,
         )
 
         manifest_path = cfg.wiki.output_dir / ".codewiki_manifest.json"
@@ -102,7 +109,7 @@ def run_impact(target: str, source: str, cfg: CodeWikiConfig) -> dict:
     source_path, cleanup = resolve_source(source, cfg)
     try:
         file_records = walk_source(source_path, cfg)
-        symbols = parse_symbols(file_records)
+        symbols = parse_symbols(file_records, parser_backend=cfg.ingest.parser_backend)
         repo_map = build_repo_map(source_path, file_records, symbols)
         code_graph = CodeGraph()
         code_graph.build_from_repo(file_records, symbols, repo_map)

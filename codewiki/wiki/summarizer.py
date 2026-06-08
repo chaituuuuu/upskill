@@ -61,6 +61,7 @@ def summarize_repository(
     signals: list[Signal],
     budget: Budget | None = None,
     use_cache: bool = True,
+    prompt_addendum: str = "",
 ) -> SummaryBundle:
     """Run file map stage and module/system reduce stages for wiki generation."""
     run_budget = budget or Budget(token_limit=cfg.run.token_budget)
@@ -75,6 +76,7 @@ def summarize_repository(
             signals=signals,
             cache=cache,
             budget=run_budget,
+            prompt_addendum=prompt_addendum,
         )
     )
     module_summaries = _reduce_modules(file_summaries, signals)
@@ -94,6 +96,7 @@ async def _summarize_files_map(
     signals: list[Signal],
     cache: SummaryCache,
     budget: Budget,
+    prompt_addendum: str,
 ) -> list[FileSummary]:
     by_path = _symbols_by_path(symbols)
     signal_by_path = _signal_names_by_path(signals)
@@ -111,6 +114,7 @@ async def _summarize_files_map(
                     client=client,
                     sem=sem,
                     budget=budget,
+                    prompt_addendum=prompt_addendum,
                 )
             )
             for file in files
@@ -127,13 +131,14 @@ async def _summarize_one_file(
     client: LLMClient,
     sem: asyncio.Semaphore,
     budget: Budget,
+    prompt_addendum: str,
 ) -> FileSummary:
     cached = cache.load(file.hash)
     if cached is not None:
         return _coerce_file_summary(file, cached, file_symbols)
 
     fallback = _fallback_file_summary(file, file_symbols)
-    messages = _file_summary_prompt(file, file_symbols, file_signal_names)
+    messages = _file_summary_prompt(file, file_symbols, file_signal_names, prompt_addendum)
 
     try:
         async with sem:
@@ -183,6 +188,7 @@ def _file_summary_prompt(
     file: FileRecord,
     file_symbols: list[Symbol],
     file_signal_names: list[str],
+    prompt_addendum: str,
 ) -> list[dict[str, str]]:
     symbol_names = [sym.name for sym in file_symbols[:12]]
     preview = file.text[:12000]
@@ -203,12 +209,14 @@ def _file_summary_prompt(
         f"{preview}"
     )
 
+    system_prompt = "You produce grounded software documentation summaries with explicit citations."
+    if prompt_addendum.strip():
+        system_prompt = f"{system_prompt}\nLens guidance: {prompt_addendum.strip()}"
+
     return [
         {
             "role": "system",
-            "content": (
-                "You produce grounded software documentation summaries with explicit citations."
-            ),
+            "content": system_prompt,
         },
         {"role": "user", "content": user_prompt},
     ]

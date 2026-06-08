@@ -23,11 +23,13 @@ class IndexStore:
     def build(self, snippets: list[Snippet]) -> None:
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
+        # Always persist snippet payloads for fallback and vector indexing.
+        self._fallback_file.write_text(
+            json.dumps([s.__dict__ for s in snippets], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
         if index is None:
-            self._fallback_file.write_text(
-                json.dumps([s.__dict__ for s in snippets], ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
             return
 
         schema = Schema(
@@ -55,6 +57,32 @@ class IndexStore:
                 meta=s.metadata,
             )
         writer.commit()
+
+    def load_snippets(self) -> list[Snippet]:
+        if not self._fallback_file.exists():
+            return []
+
+        try:
+            data = json.loads(self._fallback_file.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+        out: list[Snippet] = []
+        if not isinstance(data, list):
+            return out
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            out.append(
+                Snippet(
+                    text=str(item.get("text", "")),
+                    cite=str(item.get("cite", "")),
+                    score=float(item.get("score", 0.0) or 0.0),
+                    metadata=item.get("metadata", {}) if isinstance(item.get("metadata", {}), dict) else {},
+                )
+            )
+        return out
 
     def search(self, query: str, top_k: int = 8) -> list[Snippet]:
         if index is None:

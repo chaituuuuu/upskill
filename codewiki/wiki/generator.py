@@ -11,6 +11,7 @@ import yaml
 
 from codewiki.config import CodeWikiConfig
 from codewiki.graph.code_graph import CodeGraph
+from codewiki.lenses.base import BaseLens
 from codewiki.llm.budget import Budget, BudgetExceeded
 from codewiki.models import FileRecord, RepoMap, Signal, Symbol
 from codewiki.utils import safe_slug
@@ -221,6 +222,7 @@ def generate_wiki(
     signals: list[Signal],
     code_graph: CodeGraph | None = None,
     budget: Budget | None = None,
+    lens: BaseLens | None = None,
     only_pages: set[str] | None = None,
     written_pages: set[str] | None = None,
 ) -> int:
@@ -248,6 +250,7 @@ def generate_wiki(
             repo_map=repo_map,
             signals=signals,
             budget=budget,
+            prompt_addendum=(lens.system_prompt_addendum() if lens is not None else ""),
         )
     except BudgetExceeded:
         raise
@@ -481,6 +484,34 @@ def generate_wiki(
         tags=["operations", "setup"],
     )
 
+    if lens is not None:
+        try:
+            for page in lens.extra_pages(
+                source_root=source_root,
+                cfg=cfg,
+                files=files,
+                symbols=symbols,
+                repo_map=repo_map,
+                signals=signals,
+                code_graph=code_graph,
+                summary_bundle=summary_input,
+            ):
+                _emit_page(
+                    page.rel_path,
+                    title=page.title,
+                    page_type=page.page_type,
+                    audience=page.audience,
+                    summary=page.summary,
+                    sections=page.sections,
+                    sources=page.sources,
+                    related=page.related,
+                    tags=page.tags,
+                    confidence=page.confidence,
+                )
+        except Exception:
+            # Lens extras should never block base wiki generation.
+            pass
+
     if only_pages is None or "AGENTS.md" in only_pages:
         (wiki_root / "AGENTS.md").write_text(
             "# AGENTS\n\n"
@@ -499,7 +530,10 @@ def generate_wiki(
     append_log(
         wiki_root,
         "ingest",
-        f"source={source_root} files={len(files)} symbols={len(symbols)} signals={len(signals)} pages={pages_written}",
+        (
+            f"source={source_root} files={len(files)} symbols={len(symbols)} "
+            f"signals={len(signals)} pages={pages_written} lens={lens.name if lens else 'business'}"
+        ),
     )
 
     if written_pages is not None:

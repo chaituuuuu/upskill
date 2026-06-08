@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 
 from codewiki.config import CodeWikiConfig
 from codewiki.index.retriever import retrieve
@@ -14,8 +15,45 @@ from codewiki.llm.retry import with_retry
 from codewiki.utils import safe_slug
 
 
+_INDEX_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+\.md)\)")
+
+
+def _indexed_pages(wiki_root: Path) -> list[Path]:
+    index_path = wiki_root / "index.md"
+    if not index_path.exists():
+        return []
+
+    try:
+        text = index_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    pages: list[Path] = []
+    seen: set[str] = set()
+    for link in _INDEX_LINK_RE.findall(text):
+        rel = str(Path(link).as_posix())
+        if rel in {"index.md", "log.md"} or rel.endswith(".proposed.md"):
+            continue
+        if rel in seen:
+            continue
+
+        target = wiki_root / rel
+        if target.exists() and target.is_file():
+            pages.append(target)
+            seen.add(rel)
+
+    return pages
+
+
 def _load_wiki_context(wiki_root: Path, limit: int = 6) -> list[tuple[str, str]]:
-    pages = sorted(p for p in wiki_root.rglob("*.md") if p.name not in {"index.md", "log.md"})
+    pages = _indexed_pages(wiki_root)
+    if not pages:
+        pages = sorted(
+            p
+            for p in wiki_root.rglob("*.md")
+            if p.name not in {"index.md", "log.md"} and not p.name.endswith(".proposed.md")
+        )
+
     out: list[tuple[str, str]] = []
     for page in pages[:limit]:
         rel = page.relative_to(wiki_root).as_posix()
@@ -80,9 +118,9 @@ def answer_question(
 ) -> str:
     """Answer a question using local retrieval + optional LLM synthesis."""
     index_dir = cfg.run.cache_dir / "index"
-    snippets = retrieve(index_dir, question, top_k=8)
-    wiki_context = _load_wiki_context(cfg.wiki.output_dir)
     run_budget = budget or Budget(token_limit=cfg.run.token_budget)
+    snippets = retrieve(index_dir, question, cfg=cfg, top_k=8, budget=run_budget)
+    wiki_context = _load_wiki_context(cfg.wiki.output_dir)
 
     answer = _fallback_answer(question, snippets)
 
