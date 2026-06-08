@@ -285,7 +285,7 @@ def serve(
 ) -> None:
     """Launch the local web viewer."""
     cfg = _load_cfg(config_file=config_file)
-    app_instance = create_app(cfg.wiki.output_dir)
+    app_instance = create_app(cfg.wiki.output_dir, cfg=cfg)
     console.print(f"Starting viewer on http://127.0.0.1:{port}")
     uvicorn.run(app_instance, host="127.0.0.1", port=port)
 
