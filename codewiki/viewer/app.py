@@ -9,18 +9,38 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field
 
 from codewiki.config import CodeWikiConfig
-from codewiki.pipeline import run_chat
+from codewiki.pipeline import run_chat, run_impact
 
 
 class ChatRequest(BaseModel):
     question: str = Field(min_length=2, max_length=2000)
     file_back: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Frontmatter helpers
+# ---------------------------------------------------------------------------
+
+_FM_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
+
+
+def _split_frontmatter(src: str) -> tuple[dict[str, Any], str]:
+    """Return (parsed_frontmatter_dict, body_without_frontmatter)."""
+    m = _FM_RE.match(src)
+    if not m:
+        return {}, src
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        meta = {}
+    return (meta if isinstance(meta, dict) else {}), src[m.end():]
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +127,7 @@ def create_app(wiki_root: Path, cfg: CodeWikiConfig | None = None) -> FastAPI:
         return sorted(
             p.relative_to(wiki_root).as_posix()
             for p in wiki_root.rglob("*.md")
-            if p.is_file()
+            if p.is_file() and not p.name.endswith(".proposed.md")
         )
 
     def _safe_path(page_path: str) -> Path:
@@ -116,8 +136,10 @@ def create_app(wiki_root: Path, cfg: CodeWikiConfig | None = None) -> FastAPI:
             raise HTTPException(404, "Page not found")
         return path
 
-    def _render(src: str) -> str:
-        return _inject_heading_ids(md.render(src))
+    def _render(src: str) -> tuple[str, dict[str, Any]]:
+        """Return (rendered_html_without_frontmatter, frontmatter_dict)."""
+        meta, body = _split_frontmatter(src)
+        return _inject_heading_ids(md.render(body)), meta
 
     def _shell(pages: list[str], initial_page: str = "") -> str:
         tree_html = _render_nav_tree(_group_pages(pages))
@@ -141,7 +163,11 @@ def create_app(wiki_root: Path, cfg: CodeWikiConfig | None = None) -> FastAPI:
     def api_page(page_path: str) -> dict[str, Any]:
         path = _safe_path(page_path)
         src  = path.read_text(encoding="utf-8", errors="ignore")
-        return {"path": page_path, "html": _render(src), "raw": src}
+        html, meta = _render(src)
+        # Flag proposed pages (sibling .proposed.md exists)
+        proposed_path = path.parent / (path.stem + ".proposed.md")
+        meta["_proposed_available"] = proposed_path.exists()
+        return {"path": page_path, "html": html, "meta": meta, "raw": src}
 
     @app.get("/page/{page_path:path}", response_class=HTMLResponse)
     def legacy_page(page_path: str) -> str:
@@ -156,10 +182,31 @@ def create_app(wiki_root: Path, cfg: CodeWikiConfig | None = None) -> FastAPI:
         if cfg is None:
             raise HTTPException(503, "Chat is disabled: viewer started without runtime config")
         try:
-            answer = run_chat(request.question, cfg, file_back=request.file_back)
+            answer = run_chat(request.question, cfg, file_back=request.file_back, source=None)
         except Exception as exc:
             raise HTTPException(500, f"Chat failed: {exc}") from exc
         return {"answer": answer, "answer_html": md.render(answer)}
+
+    @app.get("/api/impact/{target:path}")
+    def api_impact(target: str) -> dict[str, Any]:
+        """Return impact analysis for a file path or symbol name."""
+        if cfg is None:
+            raise HTTPException(503, "Impact analysis requires runtime config")
+        manifest = cfg.wiki.output_dir / ".codewiki_manifest.json"
+        if not manifest.exists():
+            raise HTTPException(404, "No manifest found — run codewiki generate first")
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            source_root = payload.get("source_root", "")
+        except Exception:
+            raise HTTPException(500, "Could not read manifest")
+        if not source_root:
+            raise HTTPException(404, "source_root missing from manifest")
+        try:
+            result = run_impact(target, source_root, cfg)
+        except Exception as exc:
+            raise HTTPException(500, f"Impact analysis failed: {exc}") from exc
+        return result
 
     return app
 
@@ -326,6 +373,19 @@ details.nav-folder:not([open]) .nf-label::before{transform:rotate(-90deg)}
 /* skeleton */
 .skel{background:linear-gradient(90deg,var(--surface) 25%,var(--surface2) 50%,var(--surface) 75%);background-size:200% 100%;border-radius:5px;animation:shim 1.5s infinite}
 @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+/* metadata panel */
+.meta-panel{display:flex;flex-wrap:wrap;align-items:center;gap:7px;padding:10px 0 18px;border-bottom:1px solid var(--border);margin-bottom:22px}
+.meta-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;font-size:.72rem;font-weight:600;border:1px solid transparent;white-space:nowrap}
+.mb-type{background:rgba(59,130,246,.12);color:#93c5fd;border-color:rgba(59,130,246,.3)}
+.mb-audience{background:rgba(249,115,22,.1);color:#fdba74;border-color:rgba(249,115,22,.3)}
+.mb-conf-high{background:rgba(63,185,80,.12);color:#7ee787;border-color:rgba(63,185,80,.3)}
+.mb-conf-medium{background:rgba(210,153,34,.12);color:#e3b341;border-color:rgba(210,153,34,.3)}
+.mb-conf-low{background:rgba(248,81,73,.12);color:#ff7b72;border-color:rgba(248,81,73,.3)}
+.mb-tag{background:rgba(139,148,158,.1);color:var(--text2);border-color:rgba(139,148,158,.2)}
+.mb-proposed{background:rgba(210,153,34,.18);color:#e3b341;border-color:rgba(210,153,34,.5);font-weight:700}
+.meta-sources{width:100%;font-size:.74rem;color:var(--text3);display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.meta-sources span{color:var(--text3)}
+.src-cite{font-family:"JetBrains Mono",monospace;font-size:.7rem;background:rgba(110,118,129,.12);padding:1px 5px;border-radius:4px;color:var(--text2)}
 /* responsive */
 @media(max-width:1080px){:root{--right-w:260px}}
 @media(max-width:880px){.right-col{display:none}}
@@ -479,6 +539,22 @@ async function loadPage(page,updateHash=true){
     const data=await res.json();
     currentRaw=data.raw||'';
     article.innerHTML=data.html;
+    // ── metadata panel ─────────────────────────────────────────────
+    const meta=data.meta||{};
+    let metaHtml='';
+    if(Object.keys(meta).length){
+      const confClass={'high':'mb-conf-high','medium':'mb-conf-medium','low':'mb-conf-low'}[meta.confidence]||'';
+      if(meta._proposed_available) metaHtml+=`<span class="meta-badge mb-proposed">&#9888; Proposed update available</span>`;
+      if(meta.type) metaHtml+=`<span class="meta-badge mb-type">${meta.type}</span>`;
+      if(meta.audience) metaHtml+=`<span class="meta-badge mb-audience">&#128101; ${meta.audience}</span>`;
+      if(meta.confidence&&confClass) metaHtml+=`<span class="meta-badge ${confClass}">&#9679; ${meta.confidence} confidence</span>`;
+      if(Array.isArray(meta.tags))meta.tags.forEach(t=>{if(t)metaHtml+=`<span class="meta-badge mb-tag">#${t}</span>`});
+      if(Array.isArray(meta.sources)&&meta.sources.length){
+        const cites=meta.sources.slice(0,6).map(s=>`<span class="src-cite">${s.replace(/</g,'&lt;')}</span>`).join('');
+        metaHtml+=`<div class="meta-sources"><span>Sources:</span>${cites}${meta.sources.length>6?`<span>+${meta.sources.length-6} more</span>`:''}</div>`;
+      }
+      if(metaHtml) article.innerHTML=`<div class="meta-panel">${metaHtml}</div>`+article.innerHTML;
+    }
     for(const block of article.querySelectorAll('pre code')){
       if(!block.className.includes('language-mermaid'))hljs.highlightElement(block);
     }
