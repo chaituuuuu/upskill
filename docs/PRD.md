@@ -5,6 +5,37 @@
 
 ---
 
+## 0. Implementation Status (as of 2026-06-09)
+
+> This section reconciles the PRD vision with what the code in [`codewiki/`](../codewiki/) actually does today. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for how it works, [`WORKFLOWS.md`](WORKFLOWS.md) for command flows, and [`IMPROVEMENTS.md`](IMPROVEMENTS.md) for gaps and next steps.
+
+**Maturity: working end-to-end prototype.** The LLM is wired into generation (map→reduce summarization), the code graph grounds both diagrams and prompts, retrieval is hybrid (keyword + optional vectors + graph), and incremental update is page-targeted. The main gaps are **test coverage, scale hardening, and deployment surfaces** — not core capability.
+
+| Capability | Status | Where |
+|---|---|---|
+| Configurable LLM (`base_url`/`model`/`api_key`, OpenAI-compatible) + real token usage | ✅ Done | [llm/client.py](../codewiki/llm/client.py), [llm/budget.py](../codewiki/llm/budget.py) |
+| LLM map-reduce synthesis (file→module→system), hash-cached, JSON-repair, offline fallback | ✅ Done | [wiki/summarizer.py](../codewiki/wiki/summarizer.py) |
+| Code graph (NetworkX): files/symbols/external, `imports`/`calls`/`defines`, impact, cycles | ✅ Done | [graph/code_graph.py](../codewiki/graph/code_graph.py), [graph/backend.py](../codewiki/graph/backend.py) |
+| Graph-grounded prompts (neighbor context injected into file summaries) | ✅ Done | [wiki/summarizer.py](../codewiki/wiki/summarizer.py) |
+| Hybrid retrieval (BM25 + optional vectors via RRF + graph neighborhood boost) | ✅ Done | [index/retriever.py](../codewiki/index/retriever.py), [index/vector_store.py](../codewiki/index/vector_store.py) |
+| Multi-language parsing (Python AST; tree-sitter Java/Go/C# if installed; JS/TS regex) | ✅ Done¹ | [ingest/parser.py](../codewiki/ingest/parser.py) |
+| Framework signal packs (Spring, FastAPI, Flask, Express) + registry + auto-detect | ✅ Done | [signals/packs/](../codewiki/signals/packs/) |
+| Pluggable analysis lenses (business, onboarding, compliance, security, ai_opportunity) | ✅ Done | [lenses/](../codewiki/lenses/) |
+| Confidence frontmatter + citation **resolution** lint (placeholder/unresolved/stale) | ✅ Done | [wiki/pages.py](../codewiki/wiki/pages.py), [lint/health.py](../codewiki/lint/health.py) |
+| Incremental update (pagemap-targeted regen, contradiction flags, locked/`.proposed.md`) | ✅ Done | [wiki/updater.py](../codewiki/wiki/updater.py), [wiki/pagemap.py](../codewiki/wiki/pagemap.py) |
+| `impact` command (graph ancestors → affected files/pages) | ✅ Done | [query/impact.py](../codewiki/query/impact.py) |
+| Local web viewer (FastAPI + markdown-it, nav, chat) | ✅ Done | [viewer/app.py](../codewiki/viewer/app.py) |
+| Automated tests / golden fixtures | ❌ Missing | — |
+| Graph scale backend (Kùzu), multi-repo federation | ❌ Missing | — |
+| Deployment surfaces (CI job, daemon/`watch`, Pages export) | ❌ Missing | — |
+| Streaming/bounded-memory ingest for very large repos | ⚠️ Partial | walker loads full text in memory |
+
+¹ tree-sitter grammar wheels are optional; without them, non-Python/JS files fall back to blind chunking.
+
+**CLI surface today:** `ping · generate (--lens, --dry-run) · update · chat (--source, --file-back) · lint · impact · serve · version`.
+
+---
+
 ## 1. Background & Motivation
 
 ### 1.1 The problem
