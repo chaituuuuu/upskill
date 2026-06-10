@@ -6,6 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 import re
+from typing import TYPE_CHECKING
 
 from codewiki.config import CodeWikiConfig
 from codewiki.index.retriever import retrieve
@@ -13,6 +14,9 @@ from codewiki.llm.budget import Budget, BudgetExceeded
 from codewiki.llm.client import LLMClient
 from codewiki.llm.retry import with_retry
 from codewiki.utils import safe_slug
+
+if TYPE_CHECKING:
+    from codewiki.graph.code_graph import CodeGraph
 
 
 _INDEX_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+\.md)\)")
@@ -115,17 +119,44 @@ def answer_question(
     cfg: CodeWikiConfig,
     file_back: bool = False,
     budget: Budget | None = None,
+    code_graph: CodeGraph | None = None,
+) -> str:
+    return asyncio.run(
+        _answer_question_async(
+            question,
+            cfg,
+            file_back=file_back,
+            budget=budget,
+            code_graph=code_graph,
+        )
+    )
+
+
+async def _answer_question_async(
+    question: str,
+    cfg: CodeWikiConfig,
+    *,
+    file_back: bool = False,
+    budget: Budget | None = None,
+    code_graph: CodeGraph | None = None,
 ) -> str:
     """Answer a question using local retrieval + optional LLM synthesis."""
     index_dir = cfg.run.cache_dir / "index"
     run_budget = budget or Budget(token_limit=cfg.run.token_budget)
-    snippets = retrieve(index_dir, question, cfg=cfg, top_k=8, budget=run_budget)
+    snippets = await retrieve(
+        index_dir,
+        question,
+        cfg=cfg,
+        top_k=8,
+        budget=run_budget,
+        code_graph=code_graph,
+    )
     wiki_context = _load_wiki_context(cfg.wiki.output_dir)
 
     answer = _fallback_answer(question, snippets)
 
     try:
-        llm_text = asyncio.run(_llm_answer(cfg, question, snippets, wiki_context, run_budget))
+        llm_text = await _llm_answer(cfg, question, snippets, wiki_context, run_budget)
         if llm_text.strip():
             answer = llm_text.strip()
     except BudgetExceeded:

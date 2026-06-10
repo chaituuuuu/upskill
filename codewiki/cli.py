@@ -27,6 +27,7 @@ from rich.table import Table
 from codewiki import __version__
 from codewiki.config import CodeWikiConfig, load_config
 from codewiki.ingest.parser import parse_symbols
+from codewiki.ingest.repo_map import build_repo_map
 from codewiki.ingest.source import resolve_source
 from codewiki.ingest.walker import walk_source
 from codewiki.llm.budget import Budget
@@ -36,6 +37,7 @@ from codewiki.lenses import available_lenses, get_lens
 from codewiki.pipeline import run_chat, run_generate, run_impact, run_lint_pipeline, run_update
 from codewiki.signals.detectors import detect_signals
 from codewiki.viewer.app import create_app
+from codewiki.wiki.summarizer import estimate_repository_tokens
 
 app = typer.Typer(
     name="codewiki",
@@ -167,12 +169,20 @@ def generate(
             selected_lens = get_lens(cfg.generation.lens)
             files = walk_source(source_root, cfg)
             symbols = parse_symbols(files, parser_backend=cfg.ingest.parser_backend)
+            repo_map = build_repo_map(source_root, files, symbols)
             signals = detect_signals(
                 files,
                 symbols,
                 extra_detectors=selected_lens.extra_signal_detectors(),
             )
-            est_tokens = sum(Budget.estimate(f.text) for f in files)
+            est_tokens = estimate_repository_tokens(
+                cfg=cfg,
+                files=files,
+                symbols=symbols,
+                repo_map=repo_map,
+                signals=signals,
+                prompt_addendum=selected_lens.system_prompt_addendum(),
+            )
 
             table = Table(title="Dry Run Estimate", show_header=True)
             table.add_column("Metric", style="bold cyan")
@@ -256,11 +266,17 @@ def chat(
     question: str = typer.Argument(..., help="Question to ask about the codebase."),
     config_file: Optional[Path] = typer.Option(None, "--config", "-c"),
     file_back: bool = typer.Option(False, "--file-back", help="Save answer as a wiki page."),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Optional source directory or Git URL for graph-scoped retrieval.",
+    ),
 ) -> None:
     """Grounded Q&A over the wiki + local code index."""
     cfg = _load_cfg(config_file=config_file)
     try:
-        answer = run_chat(question, cfg, file_back=file_back)
+        answer = run_chat(question, cfg, file_back=file_back, source=source)
     except Exception as exc:
         console.print(f"[red]✗ Chat failed:[/red] {exc}")
         raise typer.Exit(1) from exc

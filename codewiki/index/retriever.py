@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from codewiki.config import CodeWikiConfig
 from codewiki.index.store import IndexStore
@@ -11,8 +11,11 @@ from codewiki.index.vector_store import VectorStore
 from codewiki.llm.budget import Budget
 from codewiki.models import Snippet
 
+if TYPE_CHECKING:
+    from codewiki.graph.code_graph import CodeGraph
 
-def retrieve(
+
+async def retrieve(
     index_dir: Path,
     query: str,
     *,
@@ -20,42 +23,43 @@ def retrieve(
     top_k: int = 8,
     enable_graph_scope: bool = True,
     budget: Budget | None = None,
+    code_graph: CodeGraph | None = None,
 ) -> list[Snippet]:
     """Retrieve snippets using BM25 + optional vector fusion and neighborhood boost."""
     store = IndexStore(index_dir)
     bm25_hits = store.search(query, top_k=max(12, top_k * 3))
-
-    # Preserve legacy behavior when embeddings are disabled.
-    if not cfg.embedding.enabled:
-        return bm25_hits[:top_k]
 
     corpus = store.load_snippets()
     if not corpus:
         return bm25_hits[:top_k]
 
     vector_hits: list[Snippet] = []
-    vector_store = VectorStore(cfg.run.cache_dir, backend=cfg.embedding.store)
-    try:
-        vector_hits = asyncio.run(
-            vector_store.search(
+    if cfg.embedding.enabled:
+        vector_store = VectorStore(cfg.run.cache_dir, backend=cfg.embedding.store)
+        try:
+            vector_hits = await vector_store.search(
                 cfg=cfg,
                 snippets=corpus,
                 query=query,
                 top_k=max(12, top_k * 3),
                 budget=budget,
             )
-        )
-    except Exception:
-        # Keep BM25 as safe fallback when embeddings are unavailable.
-        vector_hits = []
+        except Exception:
+            # Keep BM25 as safe fallback when embeddings are unavailable.
+            vector_hits = []
 
-    if not vector_hits:
-        return bm25_hits[:top_k]
-
-    fused_scores = _rrf_scores([bm25_hits, vector_hits])
+    rankings: list[list[Snippet]] = [bm25_hits]
+    if vector_hits:
+        rankings.append(vector_hits)
+    fused_scores = _rrf_scores(rankings)
 
     if enable_graph_scope:
-        _apply_neighborhood_boost(fused_scores, corpus, bm25_hits)
+        _apply_neighborhood_boost(
+            fused_scores,
+            corpus,
+            bm25_hits,
+            code_graph=code_graph,
+        )
 
     by_cite = {item.cite: item for item in corpus}
     for item in bm25_hits:
@@ -100,8 +104,52 @@ def _apply_neighborhood_boost(
     fused_scores: dict[str, float],
     corpus: list[Snippet],
     seeds: list[Snippet],
+    *,
+    code_graph: CodeGraph | None,
 ) -> None:
-    """Boost snippets in a symbol/file neighborhood seeded from keyword hits."""
+    """Boost snippets in a graph neighborhood seeded from keyword hits."""
+    if code_graph is not None:
+        _apply_graph_neighborhood_boost(fused_scores, corpus, seeds, code_graph=code_graph)
+        return
+
+    _apply_metadata_neighborhood_boost(fused_scores, corpus, seeds)
+
+
+def _apply_graph_neighborhood_boost(
+    fused_scores: dict[str, float],
+    corpus: list[Snippet],
+    seeds: list[Snippet],
+    *,
+    code_graph: CodeGraph,
+) -> None:
+    seed_paths: set[str] = set()
+    for item in seeds[:8]:
+        path = str(item.metadata.get("path", "")).strip()
+        if path:
+            seed_paths.add(path)
+
+    if not seed_paths:
+        return
+
+    expanded_paths = set(seed_paths)
+    for path in list(seed_paths):
+        file_id = f"file:{path}"
+        for neighbor_id in code_graph.backend.neighbors(file_id):
+            if neighbor_id.startswith("file:"):
+                expanded_paths.add(neighbor_id.removeprefix("file:"))
+
+    for item in corpus:
+        path = str(item.metadata.get("path", "")).strip()
+        if path and path in expanded_paths and item.cite in fused_scores:
+            fused_scores[item.cite] += 0.15
+
+
+def _apply_metadata_neighborhood_boost(
+    fused_scores: dict[str, float],
+    corpus: list[Snippet],
+    seeds: list[Snippet],
+) -> None:
+    """Fallback boost when a graph is unavailable (symbol-sharing approximation)."""
     symbol_to_paths: dict[str, set[str]] = {}
     path_to_symbols: dict[str, set[str]] = {}
 

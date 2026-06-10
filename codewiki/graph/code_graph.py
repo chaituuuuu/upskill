@@ -198,6 +198,30 @@ class CodeGraph:
                 deps.append(neighbor_id.replace("file:", ""))
         return deps
 
+    def get_file_dependents(self, file_path: str) -> list[str]:
+        """Get files that directly import this file (1-hop internal dependents)."""
+        file_id = f"file:{file_path}"
+        if not self._backend.has_node(file_id):
+            return []
+
+        ancestor_files = {
+            node_id
+            for node_id in self._backend.ancestors(file_id)
+            if node_id.startswith("file:")
+        }
+
+        dependents: list[str] = []
+        for from_id, to_id, edge_type in self._backend.all_edges():
+            if edge_type != "imports" or to_id != file_id:
+                continue
+            if from_id not in ancestor_files or not from_id.startswith("file:"):
+                continue
+
+            path = from_id.removeprefix("file:")
+            if path and path not in dependents:
+                dependents.append(path)
+        return dependents
+
     def cycles(self) -> list[list[str]]:
         """Find cycles in the import graph."""
         return self._backend.cycles()

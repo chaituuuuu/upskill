@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from codewiki.graph.code_graph import CodeGraph
 from codewiki.models import RepoMap, Signal
 
@@ -80,4 +82,41 @@ def component_graph_diagram(code_graph: CodeGraph | None, repo_map: RepoMap | No
     
     if len(lines) == 1:
         lines.append("    A[No import graph available]")
+    return "\n".join(lines)
+
+
+def _er_entity_id(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", name.strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned.upper() or "ENTITY"
+
+
+def data_model_er_diagram(entities: list[str]) -> str:
+    names: list[str] = []
+    for entity in entities:
+        item = str(entity).strip()
+        if item and item not in names:
+            names.append(item)
+
+    lines = ["erDiagram"]
+    if not names:
+        lines.append("    DOMAIN_ENTITY {")
+        lines.append("        string id")
+        lines.append("    }")
+        lines.append("    DOMAIN_ENTITY ||--o{ DOMAIN_ENTITY : inferred_relation")
+        return "\n".join(lines)
+
+    ids = [_er_entity_id(name) for name in names[:24]]
+    for entity_id in ids:
+        lines.append(f"    {entity_id} {{")
+        lines.append("        string id")
+        lines.append("    }")
+
+    if len(ids) == 1:
+        lines.append(f"    {ids[0]} ||--o{{ {ids[0]} : self_reference")
+        return "\n".join(lines)
+
+    for idx in range(len(ids) - 1):
+        lines.append(f"    {ids[idx]} ||--o{{ {ids[idx + 1]} : related_to")
+
     return "\n".join(lines)

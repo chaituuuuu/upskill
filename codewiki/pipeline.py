@@ -34,6 +34,26 @@ class GenerateResult:
     pages: int
 
 
+def _chat_source_from_manifest(cfg: CodeWikiConfig) -> str | None:
+    manifest_path = cfg.wiki.output_dir / ".codewiki_manifest.json"
+    if not manifest_path.exists():
+        return None
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    source_root = str(payload.get("source_root", "")).strip() if isinstance(payload, dict) else ""
+    if not source_root:
+        return None
+
+    source_path = Path(source_root)
+    if not source_path.exists() or not source_path.is_dir():
+        return None
+    return source_root
+
+
 def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
     source_root, cleanup = resolve_source(source, cfg)
     try:
@@ -71,7 +91,13 @@ def run_generate(source: str, cfg: CodeWikiConfig) -> GenerateResult:
         manifest_path = cfg.wiki.output_dir / ".codewiki_manifest.json"
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(
-            json.dumps({"files": {f.path: f.hash for f in file_records}}, indent=2),
+            json.dumps(
+                {
+                    "source_root": str(source_root),
+                    "files": {f.path: f.hash for f in file_records},
+                },
+                indent=2,
+            ),
             encoding="utf-8",
         )
 
@@ -95,9 +121,34 @@ def run_update(source: str, cfg: CodeWikiConfig) -> dict:
         cleanup()
 
 
-def run_chat(question: str, cfg: CodeWikiConfig, file_back: bool = False) -> str:
+def run_chat(
+    question: str,
+    cfg: CodeWikiConfig,
+    file_back: bool = False,
+    source: str | None = None,
+) -> str:
     budget = Budget(token_limit=cfg.run.token_budget)
-    return answer_question(question, cfg, file_back=file_back, budget=budget)
+    chat_source = source or _chat_source_from_manifest(cfg)
+    if not chat_source:
+        return answer_question(question, cfg, file_back=file_back, budget=budget)
+
+    source_root, cleanup = resolve_source(chat_source, cfg)
+    try:
+        file_records = walk_source(source_root, cfg)
+        symbols = parse_symbols(file_records, parser_backend=cfg.ingest.parser_backend)
+        repo_map = build_repo_map(source_root, file_records, symbols)
+        code_graph = CodeGraph()
+        code_graph.build_from_repo(file_records, symbols, repo_map)
+
+        return answer_question(
+            question,
+            cfg,
+            file_back=file_back,
+            budget=budget,
+            code_graph=code_graph,
+        )
+    finally:
+        cleanup()
 
 
 def run_lint_pipeline(cfg: CodeWikiConfig, source_root: Path | None = None) -> dict:

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 
 from codewiki.models import FileRecord, Signal, Symbol
+from codewiki.signals.packs import SignalPack, get_pack_detectors
 from codewiki.utils import make_citation
 
 
@@ -15,9 +15,6 @@ _QUEUE_RE = re.compile(r"(kafka|rabbitmq|sqs|pubsub|topic|queue)", re.IGNORECASE
 _CRON_RE = re.compile(r"(cron|schedule|celery beat|apscheduler)", re.IGNORECASE)
 _ENV_RE = re.compile(r"(os\.environ\[|process\.env\.)")
 _INT_RE = re.compile(r"(stripe|salesforce|slack|twilio|snowflake|s3|bigquery)", re.IGNORECASE)
-
-SignalPack = Callable[[list[FileRecord], list[Symbol]], list[Signal]]
-
 
 def _path_cite(file: FileRecord, line: int = 1) -> str:
     return make_citation(file.path, line, line)
@@ -40,14 +37,7 @@ def _detect_frameworks(files: list[FileRecord]) -> set[str]:
 
 
 def _load_pack_detectors(frameworks: set[str]) -> list[SignalPack]:
-    packs: list[SignalPack] = []
-
-    if "spring" in frameworks:
-        from codewiki.signals.packs.spring import detect_spring_signals
-
-        packs.append(detect_spring_signals)
-
-    return packs
+    return get_pack_detectors(frameworks)
 
 
 def detect_signals(

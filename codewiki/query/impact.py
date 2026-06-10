@@ -29,9 +29,9 @@ def impact(
 
     # Strip the "file:" prefix for display
     affected_files: list[str] = sorted(
-        node_id.removeprefix("file:") if node_id.startswith("file:") else node_id
+        node_id.removeprefix("file:")
         for node_id in ancestors
-        if not node_id.startswith("external:")
+        if node_id.startswith("file:")
     )
 
     affected_pages: list[str] = []
